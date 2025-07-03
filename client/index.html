@@ -68,6 +68,66 @@
             text-align: center;
         }
         
+        .ability-container {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            z-index: 100;
+            background: rgba(138, 43, 226, 0.8);
+            padding: 10px;
+            border-radius: 10px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+            text-align: center;
+        }
+        
+        .ability-box {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            background: linear-gradient(45deg, #8a2be2, #9932cc);
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            position: relative;
+            overflow: hidden;
+            margin: 0 auto 5px auto;
+            box-shadow: 0 4px 15px rgba(138, 43, 226, 0.4);
+        }
+        
+        .ability-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+        }
+        
+        .ability-key {
+            color: white;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+            margin-bottom: 2px;
+        }
+        
+        .ability-text {
+            color: white;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+            opacity: 1;
+            transition: opacity 0.3s ease;
+        }
+        
+        .ability-text.hidden {
+            opacity: 0;
+        }
+        
         .health-label {
             color: white;
             font-size: 14px;
@@ -368,6 +428,13 @@
             <div class="weapon-label">Weapon</div>
             <div class="weapon-name" id="weaponName">M4</div>
             <div class="ammo-display" id="ammoDisplay">30/120</div>
+        </div>
+        <div class="ability-container">
+            <div class="ability-key">(E)</div>
+            <div class="ability-box">
+                <div class="ability-overlay" id="abilityOverlay"></div>
+            </div>
+            <div class="ability-text" id="abilityText">Dash</div>
         </div>
         <canvas id="canvas"></canvas>
     </div>

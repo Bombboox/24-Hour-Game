@@ -9,6 +9,8 @@ const healthFill = document.getElementById("healthFill");
 const healthText = document.getElementById("healthText");
 const ammoDisplay = document.getElementById("ammoDisplay");
 const weaponName = document.getElementById("weaponName");
+const abilityOverlay = document.getElementById("abilityOverlay");
+const abilityText = document.getElementById("abilityText");
 
 const MAP_COLOR = "#8383b8";
 
@@ -117,11 +119,10 @@ function handleGameState(gameState) {
 }
 
 function draw(gameState) {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
     const thisPlayer = gameState.players.find(player => player.id === socket.id) ?? gameState.players[0];
-    
     if (!thisPlayer) return; // don't render if player not found
+    
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // update health bar
     healthFill.style.width = `${thisPlayer.HP / thisPlayer.maxHP * 100}%`;
@@ -137,6 +138,20 @@ function draw(gameState) {
     //update weapon name
     if(thisPlayer.primaryWeapon.name) {
         weaponName.textContent = thisPlayer.primaryWeapon.name;
+    }
+    
+    // update ability UI
+    if (thisPlayer.specialAbility) {
+        // Update ability name
+        abilityText.textContent = thisPlayer.specialAbility.name;
+        
+        // Update ability overlay based on cooldown
+        if (thisPlayer.specialAbility.currentCooldown > 0) {
+            const cooldownPercent = (thisPlayer.specialAbility.currentCooldown / thisPlayer.specialAbility.cooldown) * 100;
+            abilityOverlay.style.height = `${cooldownPercent}%`;
+        } else {
+            abilityOverlay.style.height = '0%';
+        }
     }
     
     const cameraX = thisPlayer.x - canvas.width / 2;
@@ -178,10 +193,23 @@ function drawPlayer(player) {
     ctx.translate(player.x, player.y);
     ctx.rotate(player.angle);
     
+    // draw glow effects for special abilities
+    if (player.enlarged) {
+        ctx.shadowColor = 'yellow';
+        ctx.shadowBlur = 20;
+    } 
+    
+    if (player.berserked) {
+        ctx.shadowColor = 'red';
+        ctx.shadowBlur = 20;
+    }
+    
     if (player.flashingTimer > 0) {
         ctx.globalCompositeOperation = 'multiply';
         ctx.fillStyle = 'red';
         ctx.globalAlpha = 0.55;
+    } else if (player.dashing) {
+        ctx.globalAlpha = 0.6;
     }
     
     if (player.image) {
@@ -195,8 +223,14 @@ function drawPlayer(player) {
         ctx.stroke();
     }
     
+    // Reset shadow effects
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    
     if (player.flashingTimer > 0) {
         ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1.0;
+    } else if (player.dashing) {
         ctx.globalAlpha = 1.0;
     }
     
@@ -272,21 +306,21 @@ function handleKill(data) {
         },
         stopOnFocus: true
     }).showToast();
-    soundManager.play('ding');
+    soundManager.play('ding', 0.25);
 }
 
 function handleReload() {
-    soundManager.play('reload');
+    soundManager.play('reload', 0.25);
 }
 
 function handleHit() {
-    soundManager.play('hit');
+    soundManager.play('hit', 0.25);
 }
 
 function handleGotHit() {
-    soundManager.play('gotHit');
+    soundManager.play('gotHit', 0.15);
 }
 
 function handleFiredWeapon() {
-    soundManager.play("shoot");
+    soundManager.play("shoot", 0.25);
 }

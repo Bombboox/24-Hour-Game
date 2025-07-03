@@ -1,4 +1,5 @@
 const { createCanvas, loadImage, Image } = require('canvas');
+const { SpecialAbility, Dash, Enlarge, Berserk } = require('./specialAbilities');
 
 class Character {
     constructor(options = {x, y, radius, image, speed, maxHP, primaryWeapon, angle, damage, id}) {
@@ -20,10 +21,12 @@ class Character {
         this.spawnX = options.spawnX || 0;
         this.spawnY = options.spawnY || 0;
         this.kills = options.kills || 0;
+        this.specialAbility = options.specialAbility || null;
+        this.defense = options.defense ?? 1;
     }
     
     takeDamage(damage) {
-        this.HP -= damage;
+        this.HP -= damage * this.defense;
         if (this.HP < 0) {
             this.HP = 0;
         }
@@ -102,6 +105,12 @@ class Character {
         this.y = this.spawnY;
         this.HP = this.maxHP;
         this.primaryWeapon.ammo = this.primaryWeapon.maxAmmo;
+        if(this.specialAbility) {
+            if(this.specialAbility.isActive) this.specialAbility.onEnd(this);
+            this.specialAbility.currentCooldown = 0;
+            this.specialAbility.currentDuration = 0;
+            this.specialAbility.isActive = false;
+        }
     }
 }
 
@@ -117,7 +126,10 @@ class Ninja extends Character {
             damage: options.damage || 1.2,
             radius: options.radius || 18,
             image: options.image || ninjaImage,
-            name: options.name || 'Ninja'
+            name: options.name || 'Ninja',
+        });
+        this.specialAbility = new Dash({
+            character: this
         });
     }
     
@@ -153,7 +165,8 @@ class King extends Character {
             damage: options.damage || 1.5,
             radius: options.radius || 25,
             image: options.image || kingImage,
-            name: options.name || 'King'
+            name: options.name || 'King',
+            specialAbility: new Enlarge()
         });
     }
     
@@ -190,7 +203,8 @@ class Berserker extends Character {
             damage: options.damage || 2.0,
             radius: options.radius || 22,
             image: options.image || berserkerImage,
-            name: options.name || 'Berserker'
+            name: options.name || 'Berserker',
+            specialAbility: new Berserk()
         });
     }
     

@@ -33,6 +33,13 @@ function gameLoop(gameState, deltaTime, io) {
                 io.to(player.id).emit('reload');
             }
         }
+        if (player.inputs[69]) {
+            if(!player.specialAbility) continue;
+            
+            if(player.specialAbility.initiate(player)) {
+                io.to(player.id).emit('specialAbility');
+            }
+        }
         
         if (dx !== 0 && dy !== 0) {
             dx *= 0.707; 
@@ -101,7 +108,8 @@ function gameLoop(gameState, deltaTime, io) {
             }
         }
 
-        player.primaryWeapon.update(deltaTime);
+        if(player.primaryWeapon) player.primaryWeapon.update(deltaTime);
+        if(player.specialAbility) player.specialAbility.update(deltaTime, player);
     
         for (const bullet of gameState.bullets) {
             if (bullet.playerId === player.id) continue;
@@ -184,15 +192,12 @@ function generateNewMap() {
         let x, y, w, h;
         
         while (!validPosition && attempts < 50) {
-            // Random size for variety
             w = 50 + Math.random() * 200;
             h = 50 + Math.random() * 200;
             
-            // Random position within map bounds
             x = -MAP_RADIUS + w/2 + Math.random() * (2 * MAP_RADIUS - w);
             y = -MAP_RADIUS + h/2 + Math.random() * (2 * MAP_RADIUS - h);
             
-            // Check if obstacle overlaps with spawn areas
             const overlapsLeftSpawn = !(x > leftSpawnArea.x + leftSpawnArea.w || 
                                       x + w < leftSpawnArea.x || 
                                       y > leftSpawnArea.y + leftSpawnArea.h || 
@@ -203,7 +208,7 @@ function generateNewMap() {
                                        y > rightSpawnArea.y + rightSpawnArea.h || 
                                        y + h < rightSpawnArea.y);
             
-            // Check if obstacle overlaps with existing obstacles
+
             let overlapsExisting = false;
             for (const existing of obstacles) {
                 if (!(x > existing.x + existing.w || 

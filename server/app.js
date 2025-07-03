@@ -13,8 +13,7 @@ const io = socketIo(server);
 
 const state = {};
 const clientRooms = {};
-const waitingPlayers = [];
-const gameIntervals = {}; // track active game intervals
+const gameIntervals = {};
 
 app.use(express.static(path.join(__dirname, '../client')));
 
