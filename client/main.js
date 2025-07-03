@@ -288,5 +288,5 @@ function handleGotHit() {
 }
 
 function handleFiredWeapon() {
-    soundManager.playe("shoot");
+    soundManager.play("shoot");
 }
