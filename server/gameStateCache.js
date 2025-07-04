@@ -6,7 +6,7 @@ class GameStateCache {
         this.frameNumber = 0;
     }
 
-    // Deep clone an object for comparison
+    // deep clone for comparison
     deepClone(obj) {
         if (obj === null || typeof obj !== 'object') return obj;
         if (obj instanceof Date) return new Date(obj.getTime());
@@ -21,14 +21,14 @@ class GameStateCache {
         return cloned;
     }
 
-    // Serialize game state to a simple object structure
+    // serialize game state 
     serializeGameState(gameState) {
         return {
             players: gameState.players.map(player => ({
                 id: player.id,
-                x: Math.round(player.x * 100) / 100, // Round to 2 decimal places
+                x: Math.round(player.x * 100) / 100, // round to 2 decimal places
                 y: Math.round(player.y * 100) / 100,
-                angle: Math.round(player.angle * 1000) / 1000, // Round to 3 decimal places
+                angle: Math.round(player.angle * 1000) / 1000, // round to 3 decimal places
                 HP: Math.round(player.HP),
                 maxHP: player.maxHP,
                 radius: player.radius,
@@ -73,10 +73,10 @@ class GameStateCache {
         };
     }
 
-    // Compare two serialized states and return only the differences
+    // compare two serialized states and return only the differences
     getDeltaChanges(currentState, previousState) {
         if (!previousState) {
-            return currentState; // First frame, send everything
+            return currentState; 
         }
 
         const delta = {
@@ -89,11 +89,9 @@ class GameStateCache {
             removedObstacles: []
         };
 
-        // Compare players
         const currentPlayers = new Map(currentState.players.map(p => [p.id, p]));
         const previousPlayers = new Map(previousState.players.map(p => [p.id, p]));
 
-        // Check for new or changed players
         for (const [id, currentPlayer] of currentPlayers) {
             const previousPlayer = previousPlayers.get(id);
             if (!previousPlayer || this.hasPlayerChanged(currentPlayer, previousPlayer)) {
@@ -101,18 +99,16 @@ class GameStateCache {
             }
         }
 
-        // Check for removed players
+
         for (const [id, previousPlayer] of previousPlayers) {
             if (!currentPlayers.has(id)) {
                 delta.players.push({ id, removed: true });
             }
         }
 
-        // Compare bullets
         const currentBullets = new Map(currentState.bullets.map(b => [b.id, b]));
         const previousBullets = new Map(previousState.bullets.map(b => [b.id, b]));
 
-        // Check for new or changed bullets
         for (const [id, currentBullet] of currentBullets) {
             const previousBullet = previousBullets.get(id);
             if (!previousBullet || this.hasBulletChanged(currentBullet, previousBullet)) {
@@ -120,18 +116,15 @@ class GameStateCache {
             }
         }
 
-        // Check for removed bullets
         for (const [id, previousBullet] of previousBullets) {
             if (!currentBullets.has(id)) {
                 delta.removedBullets.push(id);
             }
         }
 
-        // Compare obstacles (usually static, but check for changes)
         const currentObstacles = new Map(currentState.obstacles.map(o => [o.id, o]));
         const previousObstacles = new Map(previousState.obstacles.map(o => [o.id, o]));
 
-        // Check for new or changed obstacles
         for (const [id, currentObstacle] of currentObstacles) {
             const previousObstacle = previousObstacles.get(id);
             if (!previousObstacle || this.hasObstacleChanged(currentObstacle, previousObstacle)) {
@@ -139,14 +132,12 @@ class GameStateCache {
             }
         }
 
-        // Check for removed obstacles
         for (const [id, previousObstacle] of previousObstacles) {
             if (!currentObstacles.has(id)) {
                 delta.removedObstacles.push(id);
             }
         }
 
-        // Only return delta if there are actual changes
         const hasChanges = delta.players.length > 0 || 
                           delta.bullets.length > 0 || 
                           delta.obstacles.length > 0 ||
@@ -188,7 +179,6 @@ class GameStateCache {
                current.color !== previous.color;
     }
 
-    // Update the cached state and return delta changes
     updateAndGetDelta(gameState) {
         const serializedState = this.serializeGameState(gameState);
         const delta = this.getDeltaChanges(serializedState, this.previousState);
@@ -200,7 +190,7 @@ class GameStateCache {
         return delta;
     }
 
-    // Reset cache (useful when game state changes significantly)
+    // reset cache
     reset() {
         this.previousState = null;
         this.frameNumber = 0;

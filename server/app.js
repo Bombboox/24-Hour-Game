@@ -16,7 +16,7 @@ const io = socketIo(server);
 const state = {};
 const clientRooms = {};
 const gameIntervals = {};
-const gameStateCaches = {}; // Cache for each game room
+const gameStateCaches = {}; // cache for each game room
 
 const FREE_FOR_ALL_ROOM = 'freeForAll';
 
@@ -177,7 +177,7 @@ function sendFullGameState(socket, gameCode) {
     if (!cache || !gameState) return;
     
     const fullState = cache.serializeGameState(gameState);
-    delete fullState.frameNumber; // Remove frameNumber to indicate full state
+    delete fullState.frameNumber; 
     const packedData = msgpack.encode(fullState);
     socket.emit('gameState', packedData);
 }
@@ -214,13 +214,13 @@ io.on('connection', (socket) => {
             
             startGameInterval(roomName);
         } else {
-            // Create new room as player 1
+            // create new room as player 1
             roomName = makeID(5);
             clientRooms[socket.id] = roomName;
             
             state[roomName] = createGameState();
             state[roomName].obstacles = generateNewMap();
-            gameStateCaches[roomName] = new GameStateCache(); // Initialize cache for this room
+            gameStateCaches[roomName] = new GameStateCache(); 
             
             const player = createPlayer(data?.characterType, data?.weaponType, 1, socket.id);
             state[roomName].players.push(player);
@@ -231,7 +231,6 @@ io.on('connection', (socket) => {
             socket.emit('gameFound', roomName);
             socket.emit('waitingForPlayer');
             
-            // Send full game state to the new player
             sendFullGameState(socket, roomName);
         }
     };
@@ -251,7 +250,7 @@ io.on('connection', (socket) => {
             state[FREE_FOR_ALL_ROOM] = createGameState();
             state[FREE_FOR_ALL_ROOM].obstacles = generateNewMap();
             state[FREE_FOR_ALL_ROOM].gameMode = 'freeForAll';
-            gameStateCaches[FREE_FOR_ALL_ROOM] = new GameStateCache(); // Initialize cache for FFA
+            gameStateCaches[FREE_FOR_ALL_ROOM] = new GameStateCache(); // intialize game state cache
             startGameInterval(FREE_FOR_ALL_ROOM);
         }
 
@@ -271,7 +270,7 @@ io.on('connection', (socket) => {
         socket.emit('gameStarting');
         socket.emit('freeForAllJoined', { playerCount });
 
-        // Send full game state to the new player
+        // send full gamestate for the new player
         sendFullGameState(socket, FREE_FOR_ALL_ROOM);
 
         io.sockets.in(FREE_FOR_ALL_ROOM).emit('playerJoined', {
@@ -282,7 +281,7 @@ io.on('connection', (socket) => {
 
     const handleChangeAngle = (angle) => {
         if (isRateLimited(socket.id, 'changeAngle')) {
-            return; // Silently ignore rate limited angle changes
+            return; 
         }
         
         const player = findPlayer(socket);
@@ -293,7 +292,7 @@ io.on('connection', (socket) => {
 
     const handleKeydown = (key) => {
         if (isRateLimited(socket.id, 'keydown')) {
-            return; // Silently ignore rate limited key events
+            return; 
         }
         
         const player = findPlayer(socket);
@@ -305,7 +304,7 @@ io.on('connection', (socket) => {
     
     const handleKeyup = (key) => {
         if (isRateLimited(socket.id, 'keyup')) {
-            return; // Silently ignore rate limited key events
+            return; 
         }
         
         const player = findPlayer(socket);
@@ -317,7 +316,7 @@ io.on('connection', (socket) => {
 
     const handleMouseDown = () => {
         if (isRateLimited(socket.id, 'mouseDown')) {
-            return; // Silently ignore rate limited mouse events
+            return; 
         }
         
         const player = findPlayer(socket);
@@ -328,7 +327,7 @@ io.on('connection', (socket) => {
 
     const handleMouseUp = () => {
         if (isRateLimited(socket.id, 'mouseUp')) {
-            return; // Silently ignore rate limited mouse events
+            return; 
         }
         
         const player = findPlayer(socket);
@@ -341,7 +340,7 @@ io.on('connection', (socket) => {
         const roomName = clientRooms[socket.id];
         if (!roomName) return;
 
-        // Clean up rate limiting data for this socket
+        // clean up rate limiting data
         for (const key of rateLimitStore.keys()) {
             if (key.startsWith(socket.id + ':')) {
                 rateLimitStore.delete(key);
@@ -349,7 +348,7 @@ io.on('connection', (socket) => {
         }
 
         if (roomName === FREE_FOR_ALL_ROOM) {
-            // Handle free for all disconnect
+            // handle free for all disconnect (do not end match)
             const roomState = state[roomName];
             if (roomState?.players) {
                 roomState.players = roomState.players.filter(p => p.id !== socket.id);
@@ -360,7 +359,7 @@ io.on('connection', (socket) => {
                 });
             }
         } else {
-            // Handle 1v1 disconnect
+            // 1v1 disconnect (end match)
             const roomState = state[roomName];
             if (roomState?.players) {
                 roomState.players.forEach(player => {
@@ -368,7 +367,7 @@ io.on('connection', (socket) => {
                 });
             }
             
-            // Clean up game interval
+            // clear interval
             if (gameIntervals[roomName]) {
                 clearInterval(gameIntervals[roomName]);
                 delete gameIntervals[roomName];
@@ -428,15 +427,14 @@ function emitGameState(gameCode, gameState) {
     const cache = gameStateCaches[gameCode];
     if (!cache) return;
     
-    // Use setImmediate to emit state asynchronously so it doesn't block the game loop
+    // send gamestate async to not block game loop
     setImmediate(() => {
-        // Check if cache should be reset (e.g., after map change)
         if (gameState.cacheReset) {
             cache.reset();
             delete gameState.cacheReset;
-            // Send full state after reset (without frameNumber to indicate it's a full state)
+            // send full state
             const fullState = cache.serializeGameState(gameState);
-            delete fullState.frameNumber; // Remove frameNumber to indicate full state
+            delete fullState.frameNumber; 
             const packedData = msgpack.encode(fullState);
             io.sockets.in(gameCode).emit('gameState', packedData);
             return;

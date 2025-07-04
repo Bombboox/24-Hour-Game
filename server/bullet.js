@@ -10,10 +10,19 @@ class Bullet {
         this.playerId = options.playerId || null;
         this.damage = options.damage || 1;
         this.id = options.id || `${this.playerId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        this.lifetime = options.lifetime || 100; 
+        this.age = 0; 
     }
     
     update(deltaTime, gameState) {
         if (!this.active) return;
+        this.age += deltaTime;
+        
+        if (this.age >= this.lifetime) {
+            this.active = false;
+            this.destroy(gameState);
+            return;
+        }
 
         const obstacles = gameState.obstacles;
         
