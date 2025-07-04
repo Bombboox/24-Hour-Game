@@ -32,6 +32,12 @@ var gameState = {
     obstacles: [],
 }
 
+var clientGameStateCache = {
+    players: new Map(),
+    bullets: new Map(),
+    obstacles: new Map()
+};
+
 var mapRadius = 1500;
 var gameActive = false;
 var gameMode = '1v1'; // Track current game mode
@@ -50,6 +56,7 @@ function main() {
         hideAllMenus();
         gameScreen.style.display = 'flex';
         gameActive = true;
+        resetClientCache();
     });
     socket.on('kill', handleKill);
     socket.on('opponentLeft', handleOpponentLeft);
@@ -114,11 +121,117 @@ function cancelSearch() {
     showMainMenu();
 }
 
-function handleGameState(gameState) {
+function handleGameState(deltaData) {
     if(!gameActive) return;
     
-    gameState = msgpack.decode(new Uint8Array(gameState));
+    const delta = msgpack.decode(new Uint8Array(deltaData));
+    
+    // Apply delta updates to local game state
+    applyDeltaToGameState(delta);
+    
     requestAnimationFrame(() => draw(gameState));
+}
+
+function resetClientCache() {
+    gameState.players = [];
+    gameState.bullets = [];
+    gameState.obstacles = [];
+    clientGameStateCache.players.clear();
+    clientGameStateCache.bullets.clear();
+    clientGameStateCache.obstacles.clear();
+}
+
+function applyDeltaToGameState(delta) {
+    // Check if this is a full state update (no frameNumber means it's a full state)
+    if (!delta.frameNumber) {
+        // Full state update - replace everything
+        gameState.players = delta.players || [];
+        gameState.bullets = delta.bullets || [];
+        gameState.obstacles = delta.obstacles || [];
+        
+        // Update cache
+        clientGameStateCache.players.clear();
+        clientGameStateCache.bullets.clear();
+        clientGameStateCache.obstacles.clear();
+        
+        for (const player of gameState.players) {
+            clientGameStateCache.players.set(player.id, player);
+        }
+        for (const bullet of gameState.bullets) {
+            clientGameStateCache.bullets.set(bullet.id, bullet);
+        }
+        for (const obstacle of gameState.obstacles) {
+            clientGameStateCache.obstacles.set(obstacle.id, obstacle);
+        }
+        return;
+    }
+    
+    // Handle player updates
+    if (delta.players) {
+        for (const playerUpdate of delta.players) {
+            if (playerUpdate.removed) {
+                // Remove player
+                gameState.players = gameState.players.filter(p => p.id !== playerUpdate.id);
+                clientGameStateCache.players.delete(playerUpdate.id);
+            } else {
+                // Update or add player
+                const existingIndex = gameState.players.findIndex(p => p.id === playerUpdate.id);
+                if (existingIndex >= 0) {
+                    gameState.players[existingIndex] = { ...gameState.players[existingIndex], ...playerUpdate };
+                } else {
+                    gameState.players.push(playerUpdate);
+                }
+                clientGameStateCache.players.set(playerUpdate.id, playerUpdate);
+            }
+        }
+    }
+    
+    // Handle bullet updates
+    if (delta.bullets) {
+        for (const bulletUpdate of delta.bullets) {
+            const existingIndex = gameState.bullets.findIndex(b => b.id === bulletUpdate.id);
+            if (existingIndex >= 0) {
+                gameState.bullets[existingIndex] = { ...gameState.bullets[existingIndex], ...bulletUpdate };
+            } else {
+                gameState.bullets.push(bulletUpdate);
+            }
+            clientGameStateCache.bullets.set(bulletUpdate.id, bulletUpdate);
+        }
+    }
+    
+    // Handle removed bullets
+    if (delta.removedBullets) {
+        for (const bulletId of delta.removedBullets) {
+            gameState.bullets = gameState.bullets.filter(b => b.id !== bulletId);
+            clientGameStateCache.bullets.delete(bulletId);
+        }
+    }
+    
+    // Handle obstacle updates
+    if (delta.obstacles) {
+        for (const obstacleUpdate of delta.obstacles) {
+            const existingIndex = gameState.obstacles.findIndex(o => o.id === obstacleUpdate.id);
+            if (existingIndex >= 0) {
+                gameState.obstacles[existingIndex] = { ...gameState.obstacles[existingIndex], ...obstacleUpdate };
+            } else {
+                gameState.obstacles.push(obstacleUpdate);
+            }
+            clientGameStateCache.obstacles.set(obstacleUpdate.id, obstacleUpdate);
+        }
+    }
+    
+    // Handle removed obstacles
+    if (delta.removedObstacles) {
+        for (const obstacleId of delta.removedObstacles) {
+            gameState.obstacles = gameState.obstacles.filter(o => o.id !== obstacleId);
+            clientGameStateCache.obstacles.delete(obstacleId);
+        }
+    }
+    
+    // Update game mode if changed
+    if (delta.gameMode) {
+        gameMode = delta.gameMode;
+    }
 }
 
 function draw(gameState) {
@@ -215,7 +328,7 @@ function drawPlayer(player) {
         ctx.globalAlpha = 0.6;
     }
     
-    if (player.image) {
+    if (player.name) {
         ctx.drawImage(playerImages[player.name], -player.radius, -player.radius, player.radius * 2, player.radius * 2);
     } else {
         ctx.beginPath();

@@ -9,6 +9,7 @@ class Bullet {
         this.active = true;
         this.playerId = options.playerId || null;
         this.damage = options.damage || 1;
+        this.id = options.id || `${this.playerId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     }
     
     update(deltaTime, gameState) {
@@ -58,6 +59,8 @@ class Bullet {
         gameState.bullets.splice(gameState.bullets.indexOf(this), 1);
     }
 }
+
+
 
 module.exports = {
     Bullet

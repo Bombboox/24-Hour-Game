@@ -173,6 +173,9 @@ function respawnAll(gameState) {
     for (const player of gameState.players) {
         player.respawn();
     }
+    
+    // Signal that the cache should be reset due to significant state change
+    gameState.cacheReset = true;
 }
 
 function generateNewMap() {

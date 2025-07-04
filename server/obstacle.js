@@ -5,6 +5,7 @@ class Obstacle {
         this.w = options.w || 50;
         this.h = options.h || 50;
         this.color = options.color || 'gray';
+        this.id = options.id || `obstacle_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     }
     
     render(ctx) {
