@@ -404,6 +404,6 @@ function emitGameState(gameCode, gameState) {
 
 // Start server
 const port = 3000;
-server.listen(port, () => {
+server.listen(port, '0.0.0.0', () => {
     console.log(`Server running at http://localhost:${port}`);
 });
