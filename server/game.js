@@ -33,6 +33,7 @@ function gameLoop(gameState, deltaTime, io) {
                 io.to(player.id).emit('reload');
             }
         }
+
         if (player.inputs[69]) {
             if(!player.specialAbility) continue;
             
@@ -146,7 +147,11 @@ function gameLoop(gameState, deltaTime, io) {
                     });
                 }
 
-                respawnAll(gameState);
+                if (gameState.gameMode === 'freeForAll') {
+                    player.randomSpawn(gameState);
+                } else {
+                    respawnAll(gameState);
+                }
             }
         }
 

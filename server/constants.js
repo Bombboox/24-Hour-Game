@@ -1,4 +1,4 @@
-const MAP_RADIUS = 1000;
+const MAP_RADIUS = 1500;
 const FRAME_RATE = 90;
 
 module.exports = {

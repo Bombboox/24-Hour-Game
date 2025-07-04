@@ -306,6 +306,16 @@
             box-shadow: 0 12px 30px rgba(68, 160, 141, 0.4);
         }
         
+        .ffa-button {
+            background: linear-gradient(45deg, #9b59b6, #8e44ad);
+            box-shadow: 0 8px 20px rgba(155, 89, 182, 0.3);
+        }
+        
+        .ffa-button:hover {
+            background: linear-gradient(45deg, #8e44ad, #7d3c98);
+            box-shadow: 0 12px 30px rgba(155, 89, 182, 0.4);
+        }
+        
         .cancel-button {
             background: linear-gradient(45deg, #e74c3c, #c0392b);
             box-shadow: 0 8px 20px rgba(231, 76, 60, 0.3);
@@ -384,6 +394,7 @@
     <div id="menu">
         <h1>Boox Shoot</h1>
         <button class="menu-button" onclick="startGame()">Start Game</button>
+        <button class="menu-button ffa-button" onclick="startFreeForAll()">Free For All</button>
         <button class="menu-button character-button" onclick="showCharacter()">Character</button>
     </div>
     

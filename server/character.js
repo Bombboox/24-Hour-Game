@@ -1,5 +1,6 @@
 const { createCanvas, loadImage, Image } = require('canvas');
 const { SpecialAbility, Dash, Enlarge, Berserk } = require('./specialAbilities');
+const { MAP_RADIUS } = require('./constants');
 
 class Character {
     constructor(options = {x, y, radius, image, speed, maxHP, primaryWeapon, angle, damage, id}) {
@@ -103,6 +104,50 @@ class Character {
     respawn() {
         this.x = this.spawnX;
         this.y = this.spawnY;
+        this.HP = this.maxHP;
+        this.primaryWeapon.ammo = this.primaryWeapon.maxAmmo;
+        if(this.specialAbility) {
+            if(this.specialAbility.isActive) this.specialAbility.onEnd(this);
+            this.specialAbility.currentCooldown = 0;
+            this.specialAbility.currentDuration = 0;
+            this.specialAbility.isActive = false;
+        }
+    }
+
+    randomSpawn(gameState) {
+        let attempts = 0;
+        let validPosition = false;
+        let x, y;
+        
+        while (!validPosition && attempts < 100) {
+            // Generate random position within map bounds
+            const angle = Math.random() * 2 * Math.PI;
+            const distance = Math.random() * (MAP_RADIUS - this.radius);
+            x = Math.cos(angle) * distance;
+            y = Math.sin(angle) * distance;
+            
+            // Check if position overlaps with any obstacles
+            validPosition = true;
+            for (const obstacle of gameState.obstacles) {
+                if (this.checkCircleRectCollision(x, y, this.radius, obstacle)) {
+                    validPosition = false;
+                    break;
+                }
+            }
+            
+            attempts++;
+        }
+        
+        // If we couldn't find a valid position after many attempts, use center
+        if (!validPosition) {
+            x = 0;
+            y = 0;
+        }
+        
+        this.x = x;
+        this.y = y;
+        this.spawnX = x;
+        this.spawnY = y;
         this.HP = this.maxHP;
         this.primaryWeapon.ammo = this.primaryWeapon.maxAmmo;
         if(this.specialAbility) {

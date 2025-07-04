@@ -32,8 +32,9 @@ var gameState = {
     obstacles: [],
 }
 
-var mapRadius = 1000;
+var mapRadius = 1500;
 var gameActive = false;
+var gameMode = '1v1'; // Track current game mode
 
 let playerSettings = loadCharacterSettings();
 
@@ -52,6 +53,7 @@ function main() {
     });
     socket.on('kill', handleKill);
     socket.on('opponentLeft', handleOpponentLeft);
+    socket.on('playerLeft', handlePlayerLeft);
     socket.on('reload', handleReload);
     socket.on('hit', handleHit);
     socket.on('gotHit', handleGotHit);
@@ -75,6 +77,7 @@ function showMainMenu() {
     gameScreen.style.display = 'none';
     menu.style.display = 'block';
     gameActive = false;
+    gameMode = '1v1';
 }
 
 function showCharacter() {
@@ -247,8 +250,19 @@ function drawBullet(bullet) {
 }
 
 function startGame() {
+    gameMode = '1v1';
     showSearching();
     socket.emit('findGame', {
+        characterType: playerSettings.characterType,
+        weaponType: playerSettings.weaponType,
+    });
+    main();
+}
+
+function startFreeForAll() {
+    gameMode = 'ffa';
+    showSearching();
+    socket.emit('findFreeForAll', {
         characterType: playerSettings.characterType,
         weaponType: playerSettings.weaponType,
     });
@@ -293,6 +307,17 @@ function handleOpponentLeft() {
         position: "right",
     }).showToast();
     showMainMenu();
+}
+
+function handlePlayerLeft(data) {
+    if (gameMode === 'ffa') {
+        Toastify({
+            text: `A player left the game. ${data.playerCount} players remaining.`,
+            duration: 3000,
+            gravity: "top",
+            position: "right",
+        }).showToast();
+    }
 }
 
 function handleKill(data) {

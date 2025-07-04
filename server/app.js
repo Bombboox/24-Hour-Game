@@ -15,6 +15,8 @@ const state = {};
 const clientRooms = {};
 const gameIntervals = {};
 
+const FREE_FOR_ALL_ROOM = 'freeForAll';
+
 app.use(express.static(path.join(__dirname, '../client')));
 
 app.get('/', (req, res) => {
@@ -30,7 +32,7 @@ function makeID(length) {
     return result;
 }
 
-function createPlayer(characterType, weaponType, playerNumber, id) {
+function createPlayer(characterType, weaponType, playerNumber, id, spawnX = null, spawnY = null) {
     const validCharacters = ['berserker', 'ninja', 'king'];
     const validWeapons = ['m4', 'shotgun', 'pistol'];
     
@@ -53,12 +55,12 @@ function createPlayer(characterType, weaponType, playerNumber, id) {
     }
 
     const baseOptions = {
-        x: playerNumber === 1 ? -MAP_RADIUS + 50 : MAP_RADIUS - 50,
-        y: 0,
+        x: playerNumber === 1 ? -MAP_RADIUS + 50 : playerNumber === 2 ? MAP_RADIUS - 50 : spawnX,
+        y: playerNumber === 1 ? 0 : playerNumber === 2 ? 0 : spawnY,
         id: id,
         primaryWeapon: weapon,
-        spawnX: playerNumber === 1 ? -MAP_RADIUS + 50 : MAP_RADIUS - 50,
-        spawnY: 0
+        spawnX: playerNumber === 1 ? -MAP_RADIUS + 50 : playerNumber === 2 ? MAP_RADIUS - 50 : spawnX,
+        spawnY: playerNumber === 1 ? 0 : playerNumber === 2 ? 0 : spawnY
     };
     
     switch (charType) {
@@ -80,8 +82,22 @@ function findAvailableRoom() {
     return null;
 }
 
+function getRandomPlayerNumber() {
+    return Math.floor(Math.random() * 1000) + 3; // Start from 3 to avoid conflicts with 1v1 mode
+}
+
+function getRandomSpawnPosition() {
+    const angle = Math.random() * 2 * Math.PI;
+    const distance = Math.random() * (MAP_RADIUS - 100) + 50;
+    return {
+        x: Math.cos(angle) * distance,
+        y: Math.sin(angle) * distance
+    };
+}
+
 io.on('connection', (socket) => {
     socket.on('findGame', (data) => handleFindGame(socket, data));
+    socket.on('findFreeForAll', (data) => handleFindFreeForAll(socket, data));
     socket.on('keydown', (key) => handleKeydown(socket, key));
     socket.on('keyup', (key) => handleKeyup(socket, key));
     socket.on('changeAngle', (angle) => handleChangeAngle(socket, angle));
@@ -131,6 +147,42 @@ io.on('connection', (socket) => {
             client.emit('gameFound', roomName);
             client.emit('waitingForPlayer');
         }
+    }
+
+    function handleFindFreeForAll(client, data) {
+        if (clientRooms[client.id]) {
+            client.emit('error', 'Already in a match');
+            console.log('Already in a match');
+            return;
+        }
+
+        if (!state[FREE_FOR_ALL_ROOM]) {
+            state[FREE_FOR_ALL_ROOM] = createGameState();
+            state[FREE_FOR_ALL_ROOM].obstacles = generateNewMap();
+            state[FREE_FOR_ALL_ROOM].gameMode = 'freeForAll';
+            startGameInterval(FREE_FOR_ALL_ROOM);
+        }
+
+        clientRooms[client.id] = FREE_FOR_ALL_ROOM;
+        client.join(FREE_FOR_ALL_ROOM);
+        client.number = getRandomPlayerNumber();
+
+        const spawnPos = getRandomSpawnPosition();
+        const player = createPlayer(data?.characterType, data?.weaponType, client.number, client.id, spawnPos.x, spawnPos.y);
+        player.randomSpawn(state[FREE_FOR_ALL_ROOM]);
+        state[FREE_FOR_ALL_ROOM].players.push(player);
+
+        client.emit('init', client.number);
+        client.emit('gameFound', FREE_FOR_ALL_ROOM);
+        client.emit('gameStarting');
+        client.emit('freeForAllJoined', { 
+            playerCount: state[FREE_FOR_ALL_ROOM].players.length 
+        });
+
+        io.sockets.in(FREE_FOR_ALL_ROOM).emit('playerJoined', {
+            playerCount: state[FREE_FOR_ALL_ROOM].players.length,
+            playerId: client.id
+        });
     }
 
     function handleChangeAngle(client, angle) {
@@ -186,26 +238,43 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         const roomName = clientRooms[socket.id];
         if(roomName) {
-            // Remove all players in this room from clientRooms
-            if(state[roomName] && state[roomName].players) {
-                state[roomName].players.forEach(player => {
-                    delete clientRooms[player.id];
-                });
+            if (roomName === FREE_FOR_ALL_ROOM) {
+                // Handle free for all disconnect
+                if (state[roomName] && state[roomName].players) {
+                    state[roomName].players = state[roomName].players.filter(p => p.id !== socket.id);
+                    
+                    // Notify remaining players
+                    io.sockets.in(roomName).emit('playerLeft', {
+                        playerCount: state[roomName].players.length,
+                        playerId: socket.id
+                    });
+                    
+                    // Don't close free for all room, just remove the player
+                }
+            } else {
+                // Handle 1v1 disconnect (original logic)
+                if(state[roomName] && state[roomName].players) {
+                    state[roomName].players.forEach(player => {
+                        delete clientRooms[player.id];
+                    });
+                }
+                
+                // Close the room when any player leaves
+                if(gameIntervals[roomName]) {
+                    clearInterval(gameIntervals[roomName]);
+                    delete gameIntervals[roomName];
+                }
+                
+                // Notify remaining players that opponent disconnected
+                if(state[roomName]) {
+                    io.sockets.in(roomName).emit('opponentLeft');
+                }
+                
+                // Clean up room state
+                delete state[roomName];
             }
             
-            // Close the room when any player leaves
-            if(gameIntervals[roomName]) {
-                clearInterval(gameIntervals[roomName]);
-                delete gameIntervals[roomName];
-            }
-            
-            // Notify remaining players that opponent disconnected
-            if(state[roomName]) {
-                io.sockets.in(roomName).emit('opponentLeft');
-            }
-            
-            // Clean up room state
-            delete state[roomName];
+            delete clientRooms[socket.id];
         }
     });
 });
