@@ -428,26 +428,29 @@ function emitGameState(gameCode, gameState) {
     const cache = gameStateCaches[gameCode];
     if (!cache) return;
     
-    // Check if cache should be reset (e.g., after map change)
-    if (gameState.cacheReset) {
-        cache.reset();
-        delete gameState.cacheReset;
-        // Send full state after reset (without frameNumber to indicate it's a full state)
-        const fullState = cache.serializeGameState(gameState);
-        delete fullState.frameNumber; // Remove frameNumber to indicate full state
-        const packedData = msgpack.encode(fullState);
-        io.sockets.in(gameCode).emit('gameState', packedData);
-        return;
-    }
-    
-    const delta = cache.updateAndGetDelta(gameState);
-    if (delta) {
-        const packedData = msgpack.encode(delta);
-        const fullStateSize = msgpack.encode(cache.serializeGameState(gameState)).length;
-        const compressionRatio = ((fullStateSize - packedData.length) / fullStateSize * 100).toFixed(1);
+    // Use setImmediate to emit state asynchronously so it doesn't block the game loop
+    setImmediate(() => {
+        // Check if cache should be reset (e.g., after map change)
+        if (gameState.cacheReset) {
+            cache.reset();
+            delete gameState.cacheReset;
+            // Send full state after reset (without frameNumber to indicate it's a full state)
+            const fullState = cache.serializeGameState(gameState);
+            delete fullState.frameNumber; // Remove frameNumber to indicate full state
+            const packedData = msgpack.encode(fullState);
+            io.sockets.in(gameCode).emit('gameState', packedData);
+            return;
+        }
+        
+        const delta = cache.updateAndGetDelta(gameState);
+        if (delta) {
+            const packedData = msgpack.encode(delta);
+            const fullStateSize = msgpack.encode(cache.serializeGameState(gameState)).length;
+            const compressionRatio = ((fullStateSize - packedData.length) / fullStateSize * 100).toFixed(1);
 
-        io.sockets.in(gameCode).emit('gameState', packedData);
-    }
+            io.sockets.in(gameCode).emit('gameState', packedData);
+        }
+    });
 }
 
 // Start server
