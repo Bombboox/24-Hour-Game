@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
+const msgpack = require('msgpack-lite');
 const { createGameState, gameLoop, generateNewMap } = require('./game');
 const { Berserker, Ninja, King } = require('./character');
 const { M4, Sniper, Pistol, Shotgun } = require('./weapon');
@@ -80,7 +81,7 @@ function isRateLimited(socketId, eventType) {
     return false;
 }
 
-// Clean up old rate limit records periodically
+
 setInterval(() => {
     const now = Date.now();
     for (const [key, record] of rateLimitStore.entries()) {
@@ -88,7 +89,7 @@ setInterval(() => {
             rateLimitStore.delete(key);
         }
     }
-}, 60000); // Clean up every minute
+}, 60000); 
 
 app.use(express.static(path.join(__dirname, '../client')));
 
@@ -96,7 +97,7 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, '../client/index.html'));
 });
 
-// id generation 
+
 const ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 const ID_CHARS_LENGTH = ID_CHARS.length;
 
@@ -358,7 +359,6 @@ io.on('connection', (socket) => {
         delete clientRooms[socket.id];
     };
 
-    // Bind all event handlers
     socket.on('findGame', handleFindGame);
     socket.on('findFreeForAll', handleFindFreeForAll);
     socket.on('keydown', handleKeydown);
@@ -369,7 +369,7 @@ io.on('connection', (socket) => {
     socket.on('disconnect', handleDisconnect);
 });
 
-// Pre-calculate frame rate interval
+
 const FRAME_INTERVAL = 1000 / FRAME_RATE;
 const DELTA_TIME_DIVISOR = 40;
 
@@ -399,7 +399,8 @@ function startGameInterval(gameCode) {
 }
 
 function emitGameState(gameCode, gameState) {
-    io.sockets.in(gameCode).emit('gameState', JSON.stringify(gameState));
+    const packedData = msgpack.encode(gameState);
+    io.sockets.in(gameCode).emit('gameState', packedData);
 }
 
 // Start server

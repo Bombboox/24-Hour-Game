@@ -117,7 +117,7 @@ function cancelSearch() {
 function handleGameState(gameState) {
     if(!gameActive) return;
     
-    gameState = JSON.parse(gameState);
+    gameState = msgpack.decode(new Uint8Array(gameState));
     requestAnimationFrame(() => draw(gameState));
 }
 
