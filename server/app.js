@@ -605,8 +605,7 @@ process.on('SIGINT', () => {
 });
 
 // Start server
-const port = process.env.PORT || 80;
-const protocol = port === 443 ? 'https' : 'http';
+const port = process.env.PORT || 3000;
 server.listen(port, '0.0.0.0', () => {
-    logger.info(`Server running at ${protocol}://localhost:${port}`);
+    logger.info(`Server running at http://localhost:${port}`);
 });
