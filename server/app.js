@@ -144,11 +144,25 @@ function cleanupRateLimitStore() {
 
 function cleanupPlayerFromRoom(socketId) {
     const roomName = clientRooms.get(socketId);
-    if (!roomName) return;
+    if (!roomName) {
+        for (const [gameCode, gameState] of state.entries()) {
+            if (gameState?.players?.some(p => p.id === socketId)) {
+                const updatedPlayers = gameState.players.filter(p => p.id !== socketId);
+                gameState.players = updatedPlayers;
+                gameState.cacheReset = true;
+                roomPlayers.delete(socketId);
+                clientRooms.delete(socketId);
+                return;
+            }
+        }
+        return;
+    }
 
     const gameState = state.get(roomName);
+
     if (gameState?.players) {
         gameState.players = gameState.players.filter(p => p.id !== socketId);
+        gameState.cacheReset = true;
     }
     
     roomPlayers.delete(socketId);
