@@ -147,7 +147,7 @@ function cleanupPlayerFromRoom(socketId) {
     if (!roomName) return;
 
     const gameState = state.get(roomName);
-    if (gameState.players) {
+    if (gameState?.players) {
         gameState.players = gameState.players.filter(p => p.id !== socketId);
     }
     
@@ -157,7 +157,7 @@ function cleanupPlayerFromRoom(socketId) {
 
 function cleanupRoom(roomName) {
     const gameState = state.get(roomName);
-    if (gameState.players) {
+    if (gameState?.players) {
         gameState.players.forEach(player => {
             roomPlayers.delete(player.id);
             clientRooms.delete(player.id);
