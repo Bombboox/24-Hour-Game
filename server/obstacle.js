@@ -7,6 +7,10 @@ class Obstacle {
         this.color = options.color || 'gray';
         this.id = options.id || `obstacle_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     }
+
+    destroy(gameState) {
+        gameState.obstacles.splice(gameState.obstacles.indexOf(this), 1);
+    }
     
     render(ctx) {
         ctx.fillStyle = this.color;
@@ -14,6 +18,23 @@ class Obstacle {
     }
 }
 
+class Shield extends Obstacle {
+    constructor(options = {}) {
+        super(options);
+        this.health = 100;
+        this.image = "shield.png";
+        this.angle = options.angle || 0;
+    }
+
+    takeDamage(damage, gameState) {
+        this.health -= damage;
+        if(this.health <= 0) {
+            this.destroy(gameState);
+        }
+    }
+}
+
 module.exports = {
-    Obstacle
+    Obstacle,
+    Shield
 }

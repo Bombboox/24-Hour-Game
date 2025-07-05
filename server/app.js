@@ -8,15 +8,17 @@ const { Berserker, Ninja, King } = require('./character');
 const { M4, Sniper, Pistol, Shotgun } = require('./weapon');
 const { MAP_RADIUS, FRAME_RATE } = require('./constants');
 const { GameStateCache } = require('./gameStateCache');
+const { Worker } = require('worker_threads');
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
-const state = {};
-const clientRooms = {};
-const gameIntervals = {};
-const gameStateCaches = {}; // cache for each game room
+const state = new Map();
+const clientRooms = new Map();
+const gameIntervals = new Map();
+const gameStateCaches = new Map();
+const roomPlayers = new Map();
 
 const FREE_FOR_ALL_ROOM = 'freeForAll';
 
@@ -41,7 +43,7 @@ const SPAWN_POSITIONS = {
     2: { x: MAP_RADIUS - 50, y: 0 }
 };
 
-// Rate limiting configuration
+// rate limiting
 const RATE_LIMITS = {
     findGame: { maxRequests: 5, windowMs: 60000 }, // 5 requests per minute
     findFreeForAll: { maxRequests: 5, windowMs: 60000 }, // 5 requests per minute
@@ -52,8 +54,55 @@ const RATE_LIMITS = {
     mouseUp: { maxRequests: 30, windowMs: 1000 } // 30 requests per second
 };
 
-// Rate limiting storage
+// rate limiting storage
 const rateLimitStore = new Map();
+
+const logger = {
+    info: (message, data = {}) => {
+        console.log(`[INFO] ${new Date().toISOString()} - ${message}`, data);
+    },
+    error: (message, error = null) => {
+        console.error(`[ERROR] ${new Date().toISOString()} - ${message}`, error);
+    },
+    warn: (message, data = {}) => {
+        console.warn(`[WARN] ${new Date().toISOString()} - ${message}`, data);
+    },
+    debug: (message, data = {}) => {
+        if (process.env.NODE_ENV === 'development') {
+            console.log(`[DEBUG] ${new Date().toISOString()} - ${message}`, data);
+        }
+    }
+};
+
+// Health monitoring
+const healthMetrics = {
+    connections: 0,
+    activeRooms: 0,
+    memoryUsage: 0,
+    uptime: Date.now(),
+    errors: 0
+};
+
+/*setInterval(() => {
+    updateHealthMetrics();
+    console.log(healthMetrics);
+}, 3000);*/
+
+function updateHealthMetrics() {
+    healthMetrics.connections = io.engine.clientsCount;
+    healthMetrics.activeRooms = state.size;
+    healthMetrics.memoryUsage = process.memoryUsage().heapUsed / 1024 / 1024; // MB
+}
+
+
+app.get('/health', (req, res) => {
+    updateHealthMetrics();
+    res.json({
+        status: 'healthy',
+        uptime: Date.now() - healthMetrics.uptime,
+        metrics: healthMetrics
+    });
+});
 
 function isRateLimited(socketId, eventType) {
     const key = `${socketId}:${eventType}`;
@@ -83,22 +132,73 @@ function isRateLimited(socketId, eventType) {
     return false;
 }
 
-
-setInterval(() => {
+// Cleanup functions
+function cleanupRateLimitStore() {
     const now = Date.now();
     for (const [key, record] of rateLimitStore.entries()) {
         if (now > record.resetTime) {
             rateLimitStore.delete(key);
         }
     }
-}, 60000); 
+}
+
+function cleanupPlayerFromRoom(socketId) {
+    const roomName = clientRooms.get(socketId);
+    if (!roomName) return;
+
+    const gameState = state.get(roomName);
+    if (gameState?.players) {
+        gameState.players = gameState.players.filter(p => p.id !== socketId);
+    }
+    
+    roomPlayers.delete(socketId);
+    clientRooms.delete(socketId);
+}
+
+function cleanupRoom(roomName) {
+    const gameState = state.get(roomName);
+    if (gameState?.players) {
+        gameState.players.forEach(player => {
+            roomPlayers.delete(player.id);
+            clientRooms.delete(player.id);
+        });
+    }
+    
+    const intervalId = gameIntervals.get(roomName);
+    if (intervalId) {
+        clearInterval(intervalId);
+        gameIntervals.delete(roomName);
+    }
+    
+    state.delete(roomName);
+    gameStateCaches.delete(roomName);
+    
+    logger.info(`Room cleaned up: ${roomName}`);
+}
+
+function cleanupSocketResources(socketId) {
+    // Clean up rate limiting data
+    for (const key of rateLimitStore.keys()) {
+        if (key.startsWith(socketId + ':')) {
+            rateLimitStore.delete(key);
+        }
+    }
+    
+    roomPlayers.delete(socketId);
+    clientRooms.delete(socketId);
+}
+
+// Periodic cleanup
+setInterval(() => {
+    cleanupRateLimitStore();
+    updateHealthMetrics();
+}, 60000);
 
 app.use(express.static(path.join(__dirname, '../client')));
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, '../client/index.html'));
 });
-
 
 const ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 const ID_CHARS_LENGTH = ID_CHARS.length;
@@ -131,12 +231,14 @@ function createPlayer(characterType, weaponType, playerNumber, id, spawnX = null
         spawnY: y
     };
     
-    return new CharacterClass(baseOptions);
+    const player = new CharacterClass(baseOptions);
+    roomPlayers.set(id, player); // Store in player lookup map
+    return player;
 }
 
 function findAvailableRoom() {
-    for (const roomName in state) {
-        if (state[roomName].players.length === 1) {
+    for (const [roomName, gameState] of state.entries()) {
+        if (gameState.players.length === 1) {
             return roomName;
         }
     }
@@ -163,17 +265,14 @@ function getRandomSpawnPosition() {
     };
 }
 
+// Optimized player lookup using Map
 const findPlayer = (client) => {
-    const roomName = clientRooms[client.id];
-    if (!roomName || !state[roomName]) {
-        return null;
-    }
-    return state[roomName].players.find(p => p.id === client.id);
+    return roomPlayers.get(client.id) || null;
 };
 
 function sendFullGameState(socket, gameCode) {
-    const cache = gameStateCaches[gameCode];
-    const gameState = state[gameCode];
+    const cache = gameStateCaches.get(gameCode);
+    const gameState = state.get(gameCode);
     if (!cache || !gameState) return;
     
     const fullState = cache.serializeGameState(gameState);
@@ -183,100 +282,119 @@ function sendFullGameState(socket, gameCode) {
 }
 
 io.on('connection', (socket) => {
-    const handleFindGame = (data) => {
-        if (isRateLimited(socket.id, 'findGame')) {
-            socket.emit('error', 'Rate limit exceeded. Please try again later.');
-            return;
-        }
-        
-        if (clientRooms[socket.id]) {
-            socket.emit('error', 'Already in a match or searching for one');
-            return;
-        }
-        
-        let roomName = findAvailableRoom();
-        
-        if (roomName) {
-            clientRooms[socket.id] = roomName;
-            socket.join(roomName);
-            socket.number = 2;
-            
-            const player = createPlayer(data?.characterType, data?.weaponType, 2, socket.id);
-            state[roomName].players.push(player);
-            
-            socket.emit('init', 2);
-            socket.emit('gameFound', roomName);
-            
-            io.sockets.in(roomName).emit('gameStarting');
-            
-            // Send full game state to the new player
-            sendFullGameState(socket, roomName);
-            
-            startGameInterval(roomName);
-        } else {
-            // create new room as player 1
-            roomName = makeID(5);
-            clientRooms[socket.id] = roomName;
-            
-            state[roomName] = createGameState();
-            state[roomName].obstacles = generateNewMap();
-            gameStateCaches[roomName] = new GameStateCache(); 
-            
-            const player = createPlayer(data?.characterType, data?.weaponType, 1, socket.id);
-            state[roomName].players.push(player);
+    healthMetrics.connections++;
+    logger.info(`Client connected: ${socket.id}`);
 
-            socket.join(roomName);
-            socket.number = 1;
-            socket.emit('init', 1);
-            socket.emit('gameFound', roomName);
-            socket.emit('waitingForPlayer');
+    const handleFindGame = (data) => {
+        try {
+            if (isRateLimited(socket.id, 'findGame')) {
+                socket.emit('error', 'Rate limit exceeded. Please try again later.');
+                return;
+            }
             
-            sendFullGameState(socket, roomName);
+            if (clientRooms.has(socket.id)) {
+                socket.emit('error', 'Already in a match or searching for one');
+                return;
+            }
+            
+            let roomName = findAvailableRoom();
+            
+            if (roomName) {
+                clientRooms.set(socket.id, roomName);
+                socket.join(roomName);
+                socket.number = 2;
+                
+                const player = createPlayer(data?.characterType, data?.weaponType, 2, socket.id);
+                state.get(roomName).players.push(player);
+                
+                socket.emit('init', 2);
+                socket.emit('gameFound', roomName);
+                
+                io.sockets.in(roomName).emit('gameStarting');
+                
+                sendFullGameState(socket, roomName);
+                startGameInterval(roomName);
+                
+                logger.info(`Player joined existing room: ${roomName}`);
+            } else {
+                roomName = makeID(5);
+                clientRooms.set(socket.id, roomName);
+                
+                state.set(roomName, createGameState());
+                state.get(roomName).obstacles = generateNewMap();
+                gameStateCaches.set(roomName, new GameStateCache());
+                
+                const player = createPlayer(data?.characterType, data?.weaponType, 1, socket.id);
+                state.get(roomName).players.push(player);
+
+                socket.join(roomName);
+                socket.number = 1;
+                socket.emit('init', 1);
+                socket.emit('gameFound', roomName);
+                socket.emit('waitingForPlayer');
+                
+                sendFullGameState(socket, roomName);
+                
+                logger.info(`New room created: ${roomName}`);
+            }
+        } catch (error) {
+            logger.error('Error in handleFindGame', error);
+            healthMetrics.errors++;
+            socket.emit('error', 'Internal server error');
         }
     };
 
     const handleFindFreeForAll = (data) => {
-        if (isRateLimited(socket.id, 'findFreeForAll')) {
-            socket.emit('error', 'Rate limit exceeded. Please try again later.');
-            return;
+        try {
+            if (isRateLimited(socket.id, 'findFreeForAll')) {
+                socket.emit('error', 'Rate limit exceeded. Please try again later.');
+                return;
+            }
+            
+            if (clientRooms.has(socket.id)) {
+                socket.emit('error', 'Already in a match');
+                return;
+            }
+
+            if (!state.has(FREE_FOR_ALL_ROOM)) {
+                state.set(FREE_FOR_ALL_ROOM, createGameState());
+                state.get(FREE_FOR_ALL_ROOM).obstacles = generateNewMap();
+                state.get(FREE_FOR_ALL_ROOM).gameMode = 'freeForAll';
+                gameStateCaches.set(FREE_FOR_ALL_ROOM, new GameStateCache());
+                startGameInterval(FREE_FOR_ALL_ROOM);
+                
+                logger.info('Free for all room created');
+            }
+
+            clientRooms.set(socket.id, FREE_FOR_ALL_ROOM);
+            socket.join(FREE_FOR_ALL_ROOM);
+            socket.number = getRandomPlayerNumber();
+
+            const spawnPos = getRandomSpawnPosition();
+            const player = createPlayer(data?.characterType, data?.weaponType, socket.number, socket.id, spawnPos.x, spawnPos.y);
+            player.randomSpawn(state.get(FREE_FOR_ALL_ROOM));
+            state.get(FREE_FOR_ALL_ROOM).players.push(player);
+
+            const playerCount = state.get(FREE_FOR_ALL_ROOM).players.length;
+
+            socket.emit('init', socket.number);
+            socket.emit('gameFound', FREE_FOR_ALL_ROOM);
+            socket.emit('gameStarting');
+            socket.emit('freeForAllJoined', { playerCount });
+
+            sendFullGameState(socket, FREE_FOR_ALL_ROOM);
+
+            io.sockets.in(FREE_FOR_ALL_ROOM).emit('playerJoined', {
+                playerCount,
+                playerId: socket.id
+            });
+            
+            logger.info(`Player joined free for all: ${socket.id}`);
+        } catch (error) {
+            logger.error('Error in handleFindFreeForAll', error);
+            healthMetrics.errors++;
+            socket.emit('error', 'Internal server error');
         }
-        
-        if (clientRooms[socket.id]) {
-            socket.emit('error', 'Already in a match');
-            return;
-        }
-
-        if (!state[FREE_FOR_ALL_ROOM]) {
-            state[FREE_FOR_ALL_ROOM] = createGameState();
-            state[FREE_FOR_ALL_ROOM].obstacles = generateNewMap();
-            state[FREE_FOR_ALL_ROOM].gameMode = 'freeForAll';
-            gameStateCaches[FREE_FOR_ALL_ROOM] = new GameStateCache(); // intialize game state cache
-            startGameInterval(FREE_FOR_ALL_ROOM);
-        }
-
-        clientRooms[socket.id] = FREE_FOR_ALL_ROOM;
-        socket.join(FREE_FOR_ALL_ROOM);
-        socket.number = getRandomPlayerNumber();
-
-        const spawnPos = getRandomSpawnPosition();
-        const player = createPlayer(data?.characterType, data?.weaponType, socket.number, socket.id, spawnPos.x, spawnPos.y);
-        player.randomSpawn(state[FREE_FOR_ALL_ROOM]);
-        state[FREE_FOR_ALL_ROOM].players.push(player);
-
-        const playerCount = state[FREE_FOR_ALL_ROOM].players.length;
-
-        socket.emit('init', socket.number);
-        socket.emit('gameFound', FREE_FOR_ALL_ROOM);
-        socket.emit('gameStarting');
-        socket.emit('freeForAllJoined', { playerCount });
-
-        // send full gamestate for the new player
-        sendFullGameState(socket, FREE_FOR_ALL_ROOM);
-
-        io.sockets.in(FREE_FOR_ALL_ROOM).emit('playerJoined', {
-            playerCount,
-            playerId: socket.id
-        });
     };
 
     const handleChangeAngle = (angle) => {
@@ -337,51 +455,37 @@ io.on('connection', (socket) => {
     };
 
     const handleDisconnect = () => {
-        const roomName = clientRooms[socket.id];
-        if (!roomName) return;
+        try {
+            const roomName = clientRooms.get(socket.id);
+            if (!roomName) return;
 
-        // clean up rate limiting data
-        for (const key of rateLimitStore.keys()) {
-            if (key.startsWith(socket.id + ':')) {
-                rateLimitStore.delete(key);
-            }
-        }
+            cleanupSocketResources(socket.id);
 
-        if (roomName === FREE_FOR_ALL_ROOM) {
-            // handle free for all disconnect (do not end match)
-            const roomState = state[roomName];
-            if (roomState?.players) {
-                roomState.players = roomState.players.filter(p => p.id !== socket.id);
-                
-                io.sockets.in(roomName).emit('playerLeft', {
-                    playerCount: roomState.players.length,
-                    playerId: socket.id
-                });
-            }
-        } else {
-            // 1v1 disconnect (end match)
-            const roomState = state[roomName];
-            if (roomState?.players) {
-                roomState.players.forEach(player => {
-                    delete clientRooms[player.id];
-                });
-            }
-            
-            // clear interval
-            if (gameIntervals[roomName]) {
-                clearInterval(gameIntervals[roomName]);
-                delete gameIntervals[roomName];
+            if (roomName === FREE_FOR_ALL_ROOM) {
+                cleanupPlayerFromRoom(socket.id);
+                const roomState = state.get(roomName);
+                if (roomState) {
+                    io.sockets.in(roomName).emit('playerLeft', {
+                        playerCount: roomState.players.length,
+                        playerId: socket.id
+                    });
+                }
+                logger.info(`Player left free for all: ${socket.id}`);
+            } else {
+                const roomState = state.get(roomName);
+                if (roomState) {
+                    io.sockets.in(roomName).emit('opponentLeft');
+                }
+                cleanupRoom(roomName);
+                logger.info(`1v1 room ended due to disconnect: ${roomName}`);
             }
             
-            if (roomState) {
-                io.sockets.in(roomName).emit('opponentLeft');
-            }
-            
-            delete state[roomName];
-            delete gameStateCaches[roomName]; // Clean up cache
+            healthMetrics.connections--;
+            logger.info(`Client disconnected: ${socket.id}`);
+        } catch (error) {
+            logger.error('Error in handleDisconnect', error);
+            healthMetrics.errors++;
         }
-        
-        delete clientRooms[socket.id];
     };
 
     socket.on('findGame', handleFindGame);
@@ -394,21 +498,20 @@ io.on('connection', (socket) => {
     socket.on('disconnect', handleDisconnect);
 });
 
-
 const FRAME_INTERVAL = 1000 / FRAME_RATE;
 const DELTA_TIME_DIVISOR = 40;
 
 function startGameInterval(gameCode) {
-    if (gameIntervals[gameCode]) {
+    if (gameIntervals.has(gameCode)) {
         return;
     }
     
     let lastTime = Date.now();
     const intervalID = setInterval(() => {
-        const gameState = state[gameCode];
+        const gameState = state.get(gameCode);
         if (!gameState) {
             clearInterval(intervalID);
-            delete gameIntervals[gameCode];
+            gameIntervals.delete(gameCode);
             return;
         }
         
@@ -416,43 +519,79 @@ function startGameInterval(gameCode) {
         const deltaTime = (currentTime - lastTime) / DELTA_TIME_DIVISOR;
         lastTime = currentTime;
         
+        // Use worker thread for heavy computations if needed
         gameLoop(gameState, deltaTime, io);
         emitGameState(gameCode, gameState);
     }, FRAME_INTERVAL);
     
-    gameIntervals[gameCode] = intervalID;
+    gameIntervals.set(gameCode, intervalID);
 }
 
 function emitGameState(gameCode, gameState) {
-    const cache = gameStateCaches[gameCode];
+    const cache = gameStateCaches.get(gameCode);
     if (!cache) return;
     
     // send gamestate async to not block game loop
     setImmediate(() => {
-        if (gameState.cacheReset) {
-            cache.reset();
-            delete gameState.cacheReset;
-            // send full state
-            const fullState = cache.serializeGameState(gameState);
-            delete fullState.frameNumber; 
-            const packedData = msgpack.encode(fullState);
-            io.sockets.in(gameCode).emit('gameState', packedData);
-            return;
-        }
-        
-        const delta = cache.updateAndGetDelta(gameState);
-        if (delta) {
-            const packedData = msgpack.encode(delta);
-            const fullStateSize = msgpack.encode(cache.serializeGameState(gameState)).length;
-            const compressionRatio = ((fullStateSize - packedData.length) / fullStateSize * 100).toFixed(1);
+        try {
+            if (gameState.cacheReset) {
+                cache.reset();
+                delete gameState.cacheReset;
+                const fullState = cache.serializeGameState(gameState);
+                delete fullState.frameNumber; 
+                const packedData = msgpack.encode(fullState);
+                io.sockets.in(gameCode).emit('gameState', packedData);
+                return;
+            }
+            
+            const delta = cache.updateAndGetDelta(gameState);
+            if (delta) {
+                const packedData = msgpack.encode(delta);
+                const fullStateSize = msgpack.encode(cache.serializeGameState(gameState)).length;
+                const compressionRatio = ((fullStateSize - packedData.length) / fullStateSize * 100).toFixed(1);
 
-            io.sockets.in(gameCode).emit('gameState', packedData);
+                io.sockets.in(gameCode).emit('gameState', packedData);
+            }
+        } catch (error) {
+            logger.error('Error in emitGameState', error);
+            healthMetrics.errors++;
         }
     });
 }
 
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    logger.info('SIGTERM received, shutting down gracefully');
+    
+    // Clean up all intervals
+    for (const intervalId of gameIntervals.values()) {
+        clearInterval(intervalId);
+    }
+    
+    // Close server
+    server.close(() => {
+        logger.info('Server closed');
+        process.exit(0);
+    });
+});
+
+process.on('SIGINT', () => {
+    logger.info('SIGINT received, shutting down gracefully');
+    
+    // Clean up all intervals
+    for (const intervalId of gameIntervals.values()) {
+        clearInterval(intervalId);
+    }
+    
+    // Close server
+    server.close(() => {
+        logger.info('Server closed');
+        process.exit(0);
+    });
+});
+
 // Start server
-const port = 3000;
+const port = process.env.PORT || 3000;
 server.listen(port, '0.0.0.0', () => {
-    console.log(`Server running at http://localhost:${port}`);
+    logger.info(`Server running at http://localhost:${port}`);
 });

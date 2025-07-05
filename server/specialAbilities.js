@@ -1,3 +1,5 @@
+const { Shield } = require('./obstacle');
+
 class SpecialAbility {
     constructor(options = {}) {
         this.name = options.name;
@@ -9,23 +11,23 @@ class SpecialAbility {
         this.gameState = options.gameState ?? null;
     }
 
-    initiate(character) {
+    initiate(character, gameState) {
         if(this.currentCooldown > 0) return false;
 
         this.isActive = true;
         this.currentCooldown = this.cooldown;
         this.currentDuration = this.duration;
-        this.onStart(character);
+        this.onStart(character, gameState);
         return true;
     }
 
-    update(deltaTime, character) {
+    update(deltaTime, character, gameState) {
         if(this.isActive) {
             this.onUpdate(character);
             this.currentDuration -= deltaTime;
             if(this.currentDuration <= 0) {
                 this.isActive = false;
-                this.onEnd(character);
+                this.onEnd(character, gameState);
             }
         } else {
             this.currentCooldown -= deltaTime;
@@ -147,6 +149,41 @@ class Berserk extends SpecialAbility {
     }
 }
 
+class ShieldAbility extends SpecialAbility {
+    constructor(options = {}) {
+        super({
+            name: "Shield",
+            cooldown: 500,
+            duration: 450,
+            ...options
+        });
+        this.shield = null;
+    }
 
+    onStart(character, gameState) {
+        this.shield = new Shield({
+            x: character.x,
+            y: character.y,
+            w: character.radius * 2,
+            h: character.radius * 2 * (40/12),
+            angle: character.angle,
+            color: "blue"
+        });
+        
+        if (gameState && gameState.obstacles) {
+            gameState.obstacles.push(this.shield);
+        }
+    }
+
+    onEnd(character, gameState) {
+        if (this.shield && gameState && gameState.obstacles) {
+            const index = gameState.obstacles.indexOf(this.shield);
+            if (index > -1) {
+                gameState.obstacles.splice(index, 1);
+            }
+        }
+        this.shield = null;
+    }
+}
 
 module.exports = { SpecialAbility, Dash, Enlarge, Berserk };

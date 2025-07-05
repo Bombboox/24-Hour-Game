@@ -41,6 +41,14 @@ function gameLoop(gameState, deltaTime, io) {
                 io.to(player.id).emit('specialAbility');
             }
         }
+
+        if (player.inputs[82] || player.inputs[114]) {
+            if(!player.secondSpecialAbility) continue;
+            
+            if(player.secondSpecialAbility.initiate(player, gameState)) {
+                io.to(player.id).emit('specialAbility2');
+            }
+        }
         
         if (dx !== 0 && dy !== 0) {
             dx *= 0.707; 
@@ -71,9 +79,10 @@ function gameLoop(gameState, deltaTime, io) {
                     const clampedDy = clampedY - player.y;
                     player.move(clampedDx, clampedDy, gameState.obstacles, gameState.bullets);
                 } else {
-                    // Push player away from boundary if they're too close
+                    // push player away from boundary if they're too close
                     if (currentDistance > maxDistance) {
-                        const pushDistance = 0; // Push them 2 units away from boundary
+                        const pushDistance = 0; // might wanna increase but 0 is working fine somehow 🤔
+
                         const normalX = player.x / currentDistance;
                         const normalY = player.y / currentDistance;
                         

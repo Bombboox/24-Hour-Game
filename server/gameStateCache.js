@@ -38,6 +38,7 @@ class GameStateCache {
                 enlarged: player.enlarged || false,
                 berserked: player.berserked || false,
                 dashing: player.dashing || false,
+                opacity: player.opacity,
                 primaryWeapon: {
                     ammo: player.primaryWeapon?.ammo || 0,
                     maxAmmo: player.primaryWeapon?.maxAmmo || 0,
@@ -66,7 +67,9 @@ class GameStateCache {
                 y: obstacle.y,
                 w: obstacle.w,
                 h: obstacle.h,
-                color: obstacle.color
+                color: obstacle.color,
+                health: obstacle.health,
+                image: obstacle.image
             })),
             gameMode: gameState.gameMode || '1v1',
             frameNumber: ++this.frameNumber
@@ -162,7 +165,8 @@ class GameStateCache {
                (current.specialAbility && previous.specialAbility && 
                 current.specialAbility.currentCooldown !== previous.specialAbility.currentCooldown) ||
                (current.specialAbility && !previous.specialAbility) ||
-               (!current.specialAbility && previous.specialAbility);
+               (!current.specialAbility && previous.specialAbility) ||
+               current.opacity !== previous.opacity;
     }
 
     hasBulletChanged(current, previous) {
@@ -176,7 +180,9 @@ class GameStateCache {
                current.y !== previous.y ||
                current.w !== previous.w ||
                current.h !== previous.h ||
-               current.color !== previous.color;
+               current.color !== previous.color ||
+               current.health !== previous.health ||
+               current.image !== previous.image;
     }
 
     updateAndGetDelta(gameState) {

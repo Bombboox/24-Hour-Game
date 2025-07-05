@@ -24,6 +24,7 @@ class Character {
         this.kills = options.kills || 0;
         this.specialAbility = options.specialAbility || null;
         this.defense = options.defense ?? 1;
+        this.opacity = options.opacity ?? 1;
     }
     
     takeDamage(damage) {
@@ -120,13 +121,13 @@ class Character {
         let x, y;
         
         while (!validPosition && attempts < 100) {
-            // Generate random position within map bounds
+            // generate random position within map bounds
             const angle = Math.random() * 2 * Math.PI;
             const distance = Math.random() * (MAP_RADIUS - this.radius);
             x = Math.cos(angle) * distance;
             y = Math.sin(angle) * distance;
             
-            // Check if position overlaps with any obstacles
+            // check if position overlaps with any obstacles
             validPosition = true;
             for (const obstacle of gameState.obstacles) {
                 if (this.checkCircleRectCollision(x, y, this.radius, obstacle)) {
@@ -138,7 +139,7 @@ class Character {
             attempts++;
         }
         
-        // If we couldn't find a valid position after many attempts, use center
+        // if we couldn't find a valid position after many attempts, use center
         if (!validPosition) {
             x = 0;
             y = 0;
