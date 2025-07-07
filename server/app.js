@@ -1,5 +1,6 @@
 const express = require('express');
-const http = require('http');
+const https = require('https');
+const fs = require('fs');
 const socketIo = require('socket.io');
 const path = require('path');
 const msgpack = require('msgpack-lite');
@@ -11,7 +12,14 @@ const { GameStateCache } = require('./gameStateCache');
 const { Worker } = require('worker_threads');
 
 const app = express();
-const server = http.createServer(app);
+
+// HTTPS server configuration
+const httpsOptions = {
+    key: fs.readFileSync(path.join(__dirname, '/etc/ssl/private/private-key.pem')),
+    cert: fs.readFileSync(path.join(__dirname, 'public-key.pem'))
+};
+
+const server = https.createServer(httpsOptions, app);
 const io = socketIo(server);
 
 const state = new Map();
