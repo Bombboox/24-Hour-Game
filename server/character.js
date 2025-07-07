@@ -12,6 +12,7 @@ class Character {
         this.maxHP = options.maxHP || 100;
         this.HP = this.maxHP;
         this.primaryWeapon = options.primaryWeapon || null;
+        this.secondaryWeapon = options.secondaryWeapon || null;
         this.angle = options.angle || 0;
         this.damage = options.damage || 1.0;
         this.inputs = [];
@@ -25,6 +26,8 @@ class Character {
         this.specialAbility = options.specialAbility || null;
         this.defense = options.defense ?? 1;
         this.opacity = options.opacity ?? 1;
+        this.swapCooldown = options.swapCooldown ?? 20;
+        this.swapCooldownTimer = 0;
     }
     
     takeDamage(damage) {
@@ -32,6 +35,14 @@ class Character {
         if (this.HP < 0) {
             this.HP = 0;
         }
+    }
+
+    swapWeapons() {
+        if(this.swapCooldownTimer > 0) return;
+        this.swapCooldownTimer = this.swapCooldown;
+        let temp = this.primaryWeapon;
+        this.primaryWeapon = this.secondaryWeapon;
+        this.secondaryWeapon = temp;
     }
     
     move(dx, dy, obstacles = [], bullets = []) {

@@ -28,9 +28,16 @@ function gameLoop(gameState, deltaTime, io) {
         if (player.inputs[68] || player.inputs[100]) { 
             dx = 1;
         }
+
         if (player.inputs[82] || player.inputs[114]) {
             if(player.primaryWeapon.reload()) {
                 io.to(player.id).emit('reload');
+            }
+        }
+
+        if (player.inputs[81] || player.inputs[113]) { 
+            if(player.swapWeapons()) {
+                io.to(player.id).emit('swapWeapons', player.primaryWeapon.name);
             }
         }
 
@@ -119,7 +126,9 @@ function gameLoop(gameState, deltaTime, io) {
         }
 
         if(player.primaryWeapon) player.primaryWeapon.update(deltaTime);
+        if(player.secondaryWeapon) player.secondaryWeapon.update(deltaTime);
         if(player.specialAbility) player.specialAbility.update(deltaTime, player);
+        if(player.swapCooldownTimer > 0) player.swapCooldownTimer -= deltaTime;
     
         for (const bullet of gameState.bullets) {
             if (bullet.playerId === player.id) continue;
@@ -134,17 +143,13 @@ function gameLoop(gameState, deltaTime, io) {
                 io.to(player.id).emit('gotHit');
             
                 player.flashingTimer = 1;
-                continue;
-            }
-            
-            if (player.checkCircleCircleCollision(player.x, player.y, player.radius, bullet.x, bullet.y, bullet.radius)) {
+            } else if (player.checkCircleCircleCollision(player.x, player.y, player.radius, bullet.x, bullet.y, bullet.radius)) {
                 player.takeDamage(bullet.damage);
                 bullet.destroy(gameState);
                 io.to(hitter).emit('hit');
                 io.to(player.id).emit('gotHit');
 
                 player.flashingTimer = 1;
-                continue;
             }
 
             if(player.HP <= 0) {
@@ -165,6 +170,7 @@ function gameLoop(gameState, deltaTime, io) {
         }
 
         player.primaryWeapon.currentCooldown -= deltaTime;
+        player.secondaryWeapon.currentCooldown -= deltaTime;
         if(player.flashingTimer > 0) {
             player.flashingTimer -= deltaTime;
         }

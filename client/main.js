@@ -11,6 +11,7 @@ const ammoDisplay = document.getElementById("ammoDisplay");
 const weaponName = document.getElementById("weaponName");
 const abilityOverlay = document.getElementById("abilityOverlay");
 const abilityText = document.getElementById("abilityText");
+const secondaryWeaponName = document.getElementById("secondaryWeaponName");
 
 const MAP_COLOR = "#8383b8";
 
@@ -50,6 +51,7 @@ function main() {
 
     document.getElementById('characterSelect').value = playerSettings.characterType;
     document.getElementById('weaponSelect').value = playerSettings.weaponType;
+    document.getElementById('secondaryWeaponSelect').value = playerSettings.secondaryWeaponType;
 
     socket.on('gameState', handleGameState);
     socket.on('gameStarting', () => {
@@ -65,6 +67,7 @@ function main() {
     socket.on('hit', handleHit);
     socket.on('gotHit', handleGotHit);
     socket.on('firedWeapon', handleFiredWeapon);
+    socket.on('swapWeapons', handleSwapWeapons);
 
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keyup', handleKeyUp);
@@ -94,6 +97,7 @@ function showCharacter() {
     // Apply saved settings to dropdowns when showing character menu
     document.getElementById('characterSelect').value = playerSettings.characterType;
     document.getElementById('weaponSelect').value = playerSettings.weaponType;
+    document.getElementById('secondaryWeaponSelect').value = playerSettings.secondaryWeaponType;
 }
 
 function showSearching() {
@@ -104,12 +108,14 @@ function showSearching() {
 function save() {
     const characterType = document.getElementById('characterSelect').value;
     const weaponType = document.getElementById('weaponSelect').value;
+    const secondaryWeaponType = document.getElementById('secondaryWeaponSelect').value;
     
-    saveCharacterSettings(characterType, weaponType);
+    saveCharacterSettings(characterType, weaponType, secondaryWeaponType);
     
     playerSettings = {
         characterType: characterType,
-        weaponType: weaponType
+        weaponType: weaponType,
+        secondaryWeaponType: secondaryWeaponType
     };
     
     showMainMenu();
@@ -358,7 +364,7 @@ function drawBullet(bullet) {
     ctx.arc(bullet.x, bullet.y, bullet.radius, 0, 2 * Math.PI);
     ctx.fillStyle = bullet.color;
     ctx.fill();
-    ctx.strokeStyle = 'orange';
+    ctx.strokeStyle = bullet.strokeColor;
     ctx.stroke(); 
 }
 
@@ -368,6 +374,7 @@ function startGame() {
     socket.emit('findGame', {
         characterType: playerSettings.characterType,
         weaponType: playerSettings.weaponType,
+        secondaryWeaponType: playerSettings.secondaryWeaponType,
     });
     main();
 }
@@ -378,6 +385,7 @@ function startFreeForAll() {
     socket.emit('findFreeForAll', {
         characterType: playerSettings.characterType,
         weaponType: playerSettings.weaponType,
+        secondaryWeaponType: playerSettings.secondaryWeaponType,
     });
     main();
 }
@@ -445,6 +453,10 @@ function handleKill(data) {
         stopOnFocus: true
     }).showToast();
     soundManager.play('ding', 0.25);
+}
+
+function handleSwapWeapons(weaponName) {
+    secondaryWeaponName.textContent = weaponName;
 }
 
 function handleReload() {

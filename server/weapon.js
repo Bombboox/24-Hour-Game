@@ -187,9 +187,9 @@ class M4 extends Weapon {
 class Sniper extends Weapon {
     constructor(options = {}) {
         super({
-            damage: options.damage || 50,
-            bulletSpeed: options.bulletSpeed || 30,
-            fireCooldown: options.fireCooldown || 15,
+            damage: options.damage || 35,
+            bulletSpeed: options.bulletSpeed || 50,
+            fireCooldown: options.fireCooldown || 75,
             spread: options.spread || Math.PI / 180, // 1 degree
             offsetDistance: options.offsetDistance || 35,
             ammo: options.ammo || 5,
@@ -248,8 +248,8 @@ class Sniper extends Weapon {
 class Pistol extends Weapon {
     constructor(options = {}) {
         super({
-            damage: options.damage || 12,
-            bulletSpeed: options.bulletSpeed || 35,
+            damage: options.damage || 18,
+            bulletSpeed: options.bulletSpeed || 30,
             fireCooldown: options.fireCooldown || 9.5,
             spread: options.spread || Math.PI / 36, 
             offsetDistance: options.offsetDistance || 18,

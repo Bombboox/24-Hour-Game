@@ -51,11 +51,20 @@ const CHARACTER_CLASSES = {
 const WEAPON_CLASSES = {
     m4: M4,
     shotgun: Shotgun,
-    pistol: Pistol
+    pistol: Pistol,
+    sniper: Sniper
+};
+
+const SECONDARY_WEAPON_CLASSES = {
+    m4: M4,
+    shotgun: Shotgun,
+    pistol: Pistol,
+    sniper: Sniper
 };
 
 const VALID_CHARACTERS = Object.keys(CHARACTER_CLASSES);
 const VALID_WEAPONS = Object.keys(WEAPON_CLASSES);
+const VALID_SECONDARY_WEAPONS = Object.keys(SECONDARY_WEAPON_CLASSES);
 
 // 1v1 spawns
 const SPAWN_POSITIONS = {
@@ -245,12 +254,14 @@ function makeID(length) {
     return result;
 }
 
-function createPlayer(characterType, weaponType, playerNumber, id, spawnX = null, spawnY = null) {
+function createPlayer(characterType, weaponType, secondaryWeaponType, playerNumber, id, spawnX = null, spawnY = null) {
     const charType = characterType?.toLowerCase();
     const weapType = weaponType?.toLowerCase();
+    const secondaryWeapType = secondaryWeaponType?.toLowerCase();
 
     const CharacterClass = CHARACTER_CLASSES[charType] || Berserker;
     const WeaponClass = WEAPON_CLASSES[weapType] || M4;
+    const SecondaryWeaponClass = SECONDARY_WEAPON_CLASSES[secondaryWeapType] || Pistol;
 
     const spawnPos = SPAWN_POSITIONS[playerNumber];
     const x = spawnPos ? spawnPos.x : spawnX;
@@ -261,6 +272,7 @@ function createPlayer(characterType, weaponType, playerNumber, id, spawnX = null
         y,
         id,
         primaryWeapon: new WeaponClass(),
+        secondaryWeapon: new SecondaryWeaponClass(),
         spawnX: x,
         spawnY: y
     };
@@ -338,7 +350,7 @@ io.on('connection', (socket) => {
                 socket.join(roomName);
                 socket.number = 2;
                 
-                const player = createPlayer(data?.characterType, data?.weaponType, 2, socket.id);
+                const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, 2, socket.id);
                 state.get(roomName).players.push(player);
                 
                 socket.emit('init', 2);
@@ -358,7 +370,7 @@ io.on('connection', (socket) => {
                 state.get(roomName).obstacles = generateNewMap();
                 gameStateCaches.set(roomName, new GameStateCache());
                 
-                const player = createPlayer(data?.characterType, data?.weaponType, 1, socket.id);
+                const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, 1, socket.id);
                 state.get(roomName).players.push(player);
 
                 socket.join(roomName);
@@ -405,7 +417,7 @@ io.on('connection', (socket) => {
             socket.number = getRandomPlayerNumber();
 
             const spawnPos = getRandomSpawnPosition();
-            const player = createPlayer(data?.characterType, data?.weaponType, socket.number, socket.id, spawnPos.x, spawnPos.y);
+            const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, socket.number, socket.id, spawnPos.x, spawnPos.y);
             player.randomSpawn(state.get(FREE_FOR_ALL_ROOM));
             state.get(FREE_FOR_ALL_ROOM).players.push(player);
 
