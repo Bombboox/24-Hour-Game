@@ -1,5 +1,6 @@
 const express = require('express');
 const https = require('https');
+const http = require('http');
 const fs = require('fs');
 const socketIo = require('socket.io');
 const path = require('path');
@@ -13,13 +14,24 @@ const { Worker } = require('worker_threads');
 
 const app = express();
 
-// HTTPS server configuration
-const httpsOptions = {
-    key: fs.readFileSync(path.join(__dirname, '/etc/ssl/private/private-key.pem')),
-    cert: fs.readFileSync(path.join(__dirname, 'public-key.pem'))
-};
+let server;
+let protocol = 'https';
+let port = process.env.PORT || 443;
 
-const server = https.createServer(httpsOptions, app);
+try {
+    const httpsOptions = {
+        key: fs.readFileSync('/etc/ssl/private/private-key.pem'),
+        cert: fs.readFileSync(path.join(__dirname, 'public-key.pem'))
+    };
+    server = https.createServer(httpsOptions, app);
+    console.log('HTTPS server created successfully');
+} catch (error) {
+    console.warn('HTTPS setup failed, falling back to HTTP:', error.message);
+    server = http.createServer(app);
+    protocol = 'http';
+    port = process.env.PORT || 3000;
+}
+
 const io = socketIo(server);
 
 const state = new Map();
@@ -613,8 +625,6 @@ process.on('SIGINT', () => {
 });
 
 // Start server
-const port = process.env.PORT || 443;
-const protocol = port === 443 ? 'https' : 'http';
 server.listen(port, '0.0.0.0', () => {
     logger.info(`Server running at ${protocol}://localhost:${port}`);
 });
