@@ -272,7 +272,7 @@ function createPlayer(characterType, weaponType, playerNumber, id, spawnX = null
 
 function findAvailableRoom() {
     for (const [roomName, gameState] of state.entries()) {
-        if (gameState.players.length === 1) {
+        if (gameState.players.length === 1 && gameState.gameMode === '1v1') {
             return roomName;
         }
     }
@@ -522,6 +522,16 @@ io.on('connection', (socket) => {
         }
     };
 
+    const handleCancelSearch = () => {
+        if (clientRooms.has(socket.id)) {
+            const roomName = clientRooms.get(socket.id);
+            cleanupSocketResources(socket.id);
+            if (roomName && roomName !== FREE_FOR_ALL_ROOM) {
+                cleanupRoom(roomName);
+            }
+        }
+    };
+
     socket.on('findGame', handleFindGame);
     socket.on('findFreeForAll', handleFindFreeForAll);
     socket.on('keydown', handleKeydown);
@@ -530,6 +540,7 @@ io.on('connection', (socket) => {
     socket.on('mouseDown', handleMouseDown);
     socket.on('mouseUp', handleMouseUp);
     socket.on('disconnect', handleDisconnect);
+    socket.on('cancelSearch', handleCancelSearch);
 });
 
 const FRAME_INTERVAL = 1000 / FRAME_RATE;
