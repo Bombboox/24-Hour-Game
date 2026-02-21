@@ -1,5 +1,6 @@
 const { Shield } = require('./obstacle');
-const { GrenadeProjectile } = require('./grenade');
+const { GrenadeProjectile, DemoExplosive } = require('./grenade');
+const { Bullet } = require('./bullet');
 
 class SpecialAbility {
     constructor(options = {}) {
@@ -53,6 +54,486 @@ class SpecialAbility {
         this.currentDuration = 0;
         this.onEnd(character, gameState);
         return true;
+    }
+}
+
+class PassiveAbility {
+    constructor(options = {}) {
+        this.name = options.name || 'Passive';
+        this.description = options.description || '';
+        this.key = options.key || 'Passive';
+        this.keyCode = options.keyCode ?? null;
+        this.cooldown = options.cooldown ?? 0;
+        this.currentCooldown = 0;
+        this.duration = options.duration ?? 0;
+        this.currentDuration = 0;
+        this.isActive = false;
+    }
+
+    update(deltaTime, character, gameState) {
+        if (this.currentCooldown > 0) {
+            this.currentCooldown = Math.max(0, this.currentCooldown - deltaTime);
+        }
+
+        if (this.isActive && this.duration > 0) {
+            this.currentDuration = Math.max(0, this.currentDuration - deltaTime);
+            if (this.currentDuration <= 0) {
+                this.isActive = false;
+                this.onEnd(character, gameState);
+            }
+        }
+
+        this.onUpdate(deltaTime, character, gameState);
+    }
+
+    canTrigger() {
+        return this.currentCooldown <= 0;
+    }
+
+    activate() {
+        this.isActive = true;
+        this.currentDuration = this.duration;
+    }
+
+    startCooldown() {
+        this.currentCooldown = this.cooldown;
+    }
+
+    onUpdate(deltaTime, character, gameState) {
+        // override as needed
+    }
+
+    onKill(character, victim, gameState) {
+        // override as needed
+    }
+
+    onDamageDealt(character, damageAmount, target, gameState) {
+        return 0;
+    }
+
+    onRespawn(character, gameState) {
+        // override as needed
+    }
+
+    onEnd(character, gameState) {
+        // override as needed
+    }
+}
+
+class NinjaMomentum extends PassiveAbility {
+    constructor(options = {}) {
+        super({
+            name: 'Momentum',
+            key: 'Passive',
+            cooldown: 0,
+            duration: 125,
+            description: 'Kill: +5% permanent speed (max 10 stacks). Also gain +20% speed for 5s after each kill.',
+            ...options
+        });
+        this.maxStacks = 10;
+        this.stackBonus = 0.05;
+        this.tempBonus = 0.2;
+        this.stacks = 0;
+    }
+
+    updateSpeedBuff(character) {
+        const stackMultiplier = this.stacks * this.stackBonus;
+        const tempMultiplier = this.isActive ? this.tempBonus : 0;
+        character.passiveSpeedBonus = 1 + stackMultiplier + tempMultiplier;
+    }
+
+    onKill(character) {
+        this.stacks = Math.min(this.maxStacks, this.stacks + 1);
+        this.activate();
+        this.updateSpeedBuff(character);
+    }
+
+    onUpdate(deltaTime, character) {
+        this.updateSpeedBuff(character);
+    }
+
+    onEnd(character) {
+        this.updateSpeedBuff(character);
+    }
+
+    onRespawn(character) {
+        this.updateSpeedBuff(character);
+    }
+}
+
+class BerserkerBloodrush extends PassiveAbility {
+    constructor(options = {}) {
+        super({
+            name: 'Bloodrush',
+            key: 'Passive',
+            cooldown: 750,
+            duration: 150,
+            description: 'Below 40% HP: gain 24% lifesteal for 6s. 30s cooldown.',
+            ...options
+        });
+        this.triggerThreshold = 0.4;
+        this.lifestealAmount = 0.4;
+    }
+
+    onUpdate(deltaTime, character) {
+        if (this.isActive || !this.canTrigger()) return;
+        if (character.maxHP <= 0) return;
+        if (character.HP / character.maxHP > this.triggerThreshold) return;
+
+        this.activate();
+        this.startCooldown();
+    }
+
+    onDamageDealt(character, damageAmount) {
+        if (!this.isActive || damageAmount <= 0) return 0;
+        const previousHP = character.HP;
+        character.HP = Math.min(character.maxHP, character.HP + damageAmount * this.lifestealAmount);
+        return Math.max(0, character.HP - previousHP);
+    }
+}
+
+class KingGoldenDomain extends PassiveAbility {
+    constructor(options = {}) {
+        super({
+            name: 'Golden Domain',
+            key: 'Z',
+            keyCode: 90,
+            cooldown: 0,
+            duration: 0,
+            description: 'Press Z to toggle. While active, emits a golden aura every 5s that slows nearby enemies by 25%.',
+            ...options
+        });
+        this.isToggledOn = false;
+        this.pulseInterval = 125;
+        this.pulseTimer = this.pulseInterval;
+        this.auraRadius = 260;
+        this.slowDuration = 125;
+        this.slowMultiplier = 0.70;
+        this.visualPulseDuration = 20;
+    }
+
+    toggle() {
+        this.isToggledOn = !this.isToggledOn;
+        this.isActive = this.isToggledOn;
+        if (this.isToggledOn) {
+            this.pulseTimer = 0;
+        }
+        return this.isToggledOn;
+    }
+
+    onUpdate(deltaTime, character, gameState) {
+        this.isActive = this.isToggledOn;
+        if (!this.isToggledOn || !gameState?.players) return;
+
+        this.pulseTimer -= deltaTime;
+        if (this.pulseTimer > 0) return;
+
+        this.pulseTimer = this.pulseInterval;
+        character.kingAuraPulseTimer = this.visualPulseDuration;
+
+        for (const target of gameState.players) {
+            if (!target || target.id === character.id) continue;
+            const dx = target.x - character.x;
+            const dy = target.y - character.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance > this.auraRadius) continue;
+            target.kingAuraSlowTimer = Math.max(target.kingAuraSlowTimer || 0, this.slowDuration);
+            target.kingAuraSlowMultiplier = this.slowMultiplier;
+        }
+    }
+
+    onRespawn(character) {
+        this.isToggledOn = false;
+        this.isActive = false;
+        this.pulseTimer = this.pulseInterval;
+        character.kingAuraPulseTimer = 0;
+    }
+}
+
+class DemomanMomentum extends PassiveAbility {
+    constructor(options = {}) {
+        super({
+            name: 'Blast Runner',
+            key: 'Passive',
+            cooldown: 0,
+            duration: 120,
+            description: 'Getting pushed by force grants a decaying movement speed boost.',
+            ...options
+        });
+        this.maxBonus = 1;
+        this.currentBonus = 0;
+    }
+
+    onForceApplied(character, magnitude) {
+        const gained = Math.min(this.maxBonus, Math.max(0.55, magnitude / 28));
+        this.currentBonus = Math.max(this.currentBonus, gained);
+        this.activate();
+    }
+
+    onUpdate(deltaTime, character) {
+        if (!this.isActive || this.duration <= 0) {
+            character.passiveSpeedBonus = 1;
+            return;
+        }
+        const decay = Math.max(0, this.currentDuration / this.duration);
+        character.passiveSpeedBonus = 1 + this.currentBonus * decay;
+    }
+
+    onEnd(character) {
+        this.currentBonus = 0;
+        character.passiveSpeedBonus = 1;
+    }
+
+    onRespawn(character) {
+        this.currentBonus = 0;
+        character.passiveSpeedBonus = 1;
+    }
+}
+
+class DemomanSatchel extends SpecialAbility {
+    constructor(options = {}) {
+        super({
+            name: 'Satchel',
+            cooldown: 150,
+            duration: 0,
+            ...options
+        });
+        this.maxCharges = options.maxCharges || 5;
+        this.charges = this.maxCharges;
+        this.chargeRegenInterval = options.chargeRegenInterval || 150;
+        this.chargeRegenTimer = 0;
+        this.maxThrowCharge = options.maxThrowCharge || 30;
+        this.maxLaunchSpeed = options.maxLaunchSpeed || 68;
+        this.minLaunchSpeed = options.minLaunchSpeed || 0;
+        this.maxPlaced = options.maxPlaced || 5;
+        this.isChargeBased = true;
+        this.holdToFire = true;
+    }
+
+    initiate(character, gameState) {
+        if (this.charges <= 0) return false;
+        if (!gameState?.grenades) return false;
+
+        this.charges -= 1;
+        if (this.charges < this.maxCharges && this.chargeRegenTimer <= 0) {
+            this.chargeRegenTimer = 0.01;
+        }
+        const holdTime = Math.max(0, character.specialAbilityHoldTime || 0);
+        const holdRatio = Math.max(0, Math.min(1, holdTime / this.maxThrowCharge));
+        const launchSpeed = this.minLaunchSpeed + (this.maxLaunchSpeed - this.minLaunchSpeed) * holdRatio;
+
+        const spawnOffset = character.radius + 16;
+        const explosive = new DemoExplosive({
+            x: character.x + Math.cos(character.angle) * spawnOffset,
+            y: character.y + Math.sin(character.angle) * spawnOffset,
+            angle: character.angle,
+            ownerId: character.id,
+            velocityX: Math.cos(character.angle) * launchSpeed,
+            velocityY: Math.sin(character.angle) * launchSpeed
+        });
+
+        const ownedExplosives = gameState.grenades.filter((g) => g.kind === 'demoExplosive' && g.ownerId === character.id);
+        if (ownedExplosives.length >= this.maxPlaced) {
+            ownedExplosives.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+            ownedExplosives[0].destroy(gameState);
+        }
+
+        gameState.grenades.push(explosive);
+        return true;
+    }
+
+    update(deltaTime, character, gameState) {
+        if (this.charges >= this.maxCharges) {
+            this.chargeRegenTimer = 0;
+            this.currentCooldown = 0;
+            return;
+        }
+        this.chargeRegenTimer += deltaTime;
+        this.currentCooldown = Math.max(0, this.chargeRegenInterval - this.chargeRegenTimer);
+        while (this.chargeRegenTimer >= this.chargeRegenInterval && this.charges < this.maxCharges) {
+            this.chargeRegenTimer -= this.chargeRegenInterval;
+            this.charges += 1;
+            this.currentCooldown = this.charges >= this.maxCharges
+                ? 0
+                : Math.max(0, this.chargeRegenInterval - this.chargeRegenTimer);
+        }
+    }
+
+    detonateAll(character, gameState, io) {
+        if (!gameState?.grenades) return false;
+        const explosives = [...gameState.grenades].filter((g) => g.kind === 'demoExplosive' && g.ownerId === character.id);
+        if (explosives.length === 0) return false;
+        for (const explosive of explosives) {
+            explosive.detonate(gameState, io);
+        }
+        return true;
+    }
+
+    onRespawn() {
+        this.charges = this.maxCharges;
+        this.chargeRegenTimer = 0;
+        this.currentCooldown = 0;
+    }
+}
+
+class ReaverArcPassive extends PassiveAbility {
+    constructor(options = {}) {
+        super({
+            name: 'Arc Surge',
+            key: 'Z',
+            keyCode: 90,
+            cooldown: 30,
+            duration: 75,
+            description: 'Press Z to zap nearby enemies with 3 Reaver stacks, stunning and damaging them while boosting movement speed.',
+            ...options
+        });
+        this.range = options.range || 300;
+        this.damage = options.damage || 5;
+        this.stunDuration = options.stunDuration || 25;
+        this.speedPerZap = options.speedPerZap || 0.08;
+        this.maxBonus = options.maxBonus || 0.4;
+        this.bonus = 0;
+    }
+
+    onUpdate(deltaTime, character, gameState) {
+        if (!gameState?.players) return;
+
+        const now = Date.now();
+        character.reaverBolts = (character.reaverBolts || []).filter((bolt) => bolt.expiresAt > now);
+
+        if (this.isActive && this.duration > 0) {
+            const decay = Math.max(0, this.currentDuration / this.duration);
+            character.passiveSpeedBonus = 1 + this.bonus * decay;
+        } else if (character.passiveSpeedBonus !== 1) {
+            character.passiveSpeedBonus = 1;
+            this.bonus = 0;
+        }
+    }
+
+    activateZap(character, gameState) {
+        if (!this.canTrigger() || !gameState?.players) return false;
+
+        const now = Date.now();
+        const targets = gameState.players.filter((target) => {
+            if (!target || target.id === character.id) return false;
+            if ((target.reaverStacks || 0) < 3) return false;
+            const dx = target.x - character.x;
+            const dy = target.y - character.y;
+            return Math.sqrt(dx * dx + dy * dy) <= this.range;
+        });
+
+        if (targets.length === 0) return false;
+
+        for (const target of targets) {
+            const hpBefore = target.HP;
+            target.takeDamage(this.damage, character.id);
+            target.flashingTimer = 1;
+            target.stunnedTimer = Math.max(target.stunnedTimer || 0, this.stunDuration);
+            target.reaverStackTimers = [];
+            target.reaverStacks = 0;
+            target.reaverStackDecayTimer = 0;
+            this.bonus = Math.min(this.maxBonus, this.bonus + this.speedPerZap);
+
+            character.reaverBolts.push({
+                targetX: target.x,
+                targetY: target.y,
+                expiresAt: now + 220
+            });
+
+            const damageDealt = Math.max(0, hpBefore - target.HP);
+            if (damageDealt > 0 && gameState?.io) {
+                gameState.io.to(character.id).emit('combatText', {
+                    type: 'damage',
+                    amount: damageDealt,
+                    x: target.x,
+                    y: target.y - target.radius - 10
+                });
+            }
+        }
+
+        this.activate();
+        this.startCooldown();
+        return true;
+    }
+
+    onEnd(character) {
+        this.bonus = 0;
+        character.passiveSpeedBonus = 1;
+    }
+
+    onRespawn(character) {
+        this.bonus = 0;
+        character.passiveSpeedBonus = 1;
+        character.reaverBolts = [];
+    }
+}
+
+class ReaverShards extends SpecialAbility {
+    constructor(options = {}) {
+        super({
+            name: 'Reaver Shard',
+            cooldown: 62.5,
+            duration: 0,
+            ...options
+        });
+        this.maxCharges = options.maxCharges || 3;
+        this.charges = this.maxCharges;
+        this.chargeRegenInterval = options.chargeRegenInterval || 62.5;
+        this.chargeRegenTimer = 0;
+        this.isChargeBased = true;
+        this.holdToFire = false;
+        this.projectileSpeed = options.projectileSpeed || 28;
+        this.projectileRange = options.projectileRange || 950;
+    }
+
+    initiate(character, gameState) {
+        if (this.charges <= 0) return false;
+        if (!gameState?.bullets) return false;
+
+        this.charges -= 1;
+        if (this.charges < this.maxCharges && this.chargeRegenTimer <= 0) {
+            this.chargeRegenTimer = 0.01;
+        }
+
+        const lifetime = this.projectileRange / this.projectileSpeed;
+        const shard = new Bullet({
+            x: character.x,
+            y: character.y,
+            speed: this.projectileSpeed,
+            angle: character.angle,
+            damage: 0,
+            radius: 12,
+            color: '#b35cff',
+            playerId: character.id,
+            lifetime,
+            kind: 'reaverShard'
+        });
+        gameState.bullets.push(shard);
+        return true;
+    }
+
+    update(deltaTime) {
+        if (this.charges >= this.maxCharges) {
+            this.chargeRegenTimer = 0;
+            this.currentCooldown = 0;
+            return;
+        }
+        this.chargeRegenTimer += deltaTime;
+        this.currentCooldown = Math.max(0, this.chargeRegenInterval - this.chargeRegenTimer);
+        while (this.chargeRegenTimer >= this.chargeRegenInterval && this.charges < this.maxCharges) {
+            this.chargeRegenTimer -= this.chargeRegenInterval;
+            this.charges += 1;
+            this.currentCooldown = this.charges >= this.maxCharges
+                ? 0
+                : Math.max(0, this.chargeRegenInterval - this.chargeRegenTimer);
+        }
+    }
+
+    onRespawn() {
+        this.charges = this.maxCharges;
+        this.chargeRegenTimer = 0;
+        this.currentCooldown = 0;
     }
 }
 
@@ -298,4 +779,20 @@ class Invisibility extends SpecialAbility {
     }
 }
 
-module.exports = { SpecialAbility, Dash, Enlarge, Berserk, Grenade, Invisibility, ShieldBarrier };
+module.exports = {
+    SpecialAbility,
+    PassiveAbility,
+    NinjaMomentum,
+    BerserkerBloodrush,
+    KingGoldenDomain,
+    DemomanMomentum,
+    DemomanSatchel,
+    ReaverArcPassive,
+    ReaverShards,
+    Dash,
+    Enlarge,
+    Berserk,
+    Grenade,
+    Invisibility,
+    ShieldBarrier
+};

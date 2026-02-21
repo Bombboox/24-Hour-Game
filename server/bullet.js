@@ -14,6 +14,8 @@ class Bullet {
         this.id = options.id || `${this.playerId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         this.lifetime = options.lifetime || 100; 
         this.age = 0; 
+        this.stunDuration = options.stunDuration || 0;
+        this.kind = options.kind || 'bullet';
     }
     
     update(deltaTime, gameState) {

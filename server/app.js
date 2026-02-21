@@ -6,8 +6,8 @@ const socketIo = require('socket.io');
 const path = require('path');
 const msgpack = require('msgpack-lite');
 const { createGameState, gameLoop, generateNewMap } = require('./game');
-const { Berserker, Ninja, King } = require('./character');
-const { M4, Sniper, Pistol, Shotgun } = require('./weapon');
+const { Berserker, Ninja, King, Demoman, Reaver } = require('./character');
+const { M4, Sniper, Pistol, Shotgun, LaserGun, Taser } = require('./weapon');
 const { Grenade, Invisibility, ShieldBarrier } = require('./specialAbilities');
 const { MAP_RADIUS, FRAME_RATE } = require('./constants');
 const { GameStateCache } = require('./gameStateCache');
@@ -46,21 +46,27 @@ const FREE_FOR_ALL_ROOM = 'freeForAll';
 const CHARACTER_CLASSES = {
     ninja: Ninja,
     king: King,
-    berserker: Berserker
+    berserker: Berserker,
+    demoman: Demoman,
+    reaver: Reaver
 };
 
 const WEAPON_CLASSES = {
     m4: M4,
     shotgun: Shotgun,
     pistol: Pistol,
-    sniper: Sniper
+    sniper: Sniper,
+    laser: LaserGun,
+    taser: Taser
 };
 
 const SECONDARY_WEAPON_CLASSES = {
     m4: M4,
     shotgun: Shotgun,
     pistol: Pistol,
-    sniper: Sniper
+    sniper: Sniper,
+    laser: LaserGun,
+    taser: Taser
 };
 
 const VALID_CHARACTERS = Object.keys(CHARACTER_CLASSES);
@@ -409,6 +415,7 @@ io.on('connection', (socket) => {
                 
                 state.set(roomName, createGameState());
                 state.get(roomName).obstacles = generateNewMap();
+                state.get(roomName).gameMode = '1v1';
                 gameStateCaches.set(roomName, new GameStateCache());
                 
                 const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, data?.sharedAbilityType, 1, socket.id);
@@ -620,6 +627,20 @@ function startGameInterval(gameCode) {
         // Use worker thread for heavy computations if needed
         gameLoop(gameState, deltaTime, io);
         emitGameState(gameCode, gameState);
+
+        if (
+            gameState.gameMode === '1v1' &&
+            gameState.matchEnded &&
+            !gameState.matchCleanupScheduled
+        ) {
+            gameState.matchCleanupScheduled = true;
+            setTimeout(() => {
+                const latestGameState = state.get(gameCode);
+                if (!latestGameState) return;
+                io.sockets.in(gameCode).emit('matchClosed');
+                cleanupRoom(gameCode);
+            }, 9000);
+        }
     }, FRAME_INTERVAL);
     
     gameIntervals.set(gameCode, intervalID);

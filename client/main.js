@@ -12,17 +12,34 @@ const ammoDisplay = document.getElementById("ammoDisplay");
 const weaponName = document.getElementById("weaponName");
 const abilityOverlay = document.getElementById("abilityOverlay");
 const abilityText = document.getElementById("abilityText");
+const abilityContainer = document.getElementById("abilityContainer");
 const sharedAbilityOverlay = document.getElementById("sharedAbilityOverlay");
 const sharedAbilityText = document.getElementById("sharedAbilityText");
+const sharedAbilityContainer = document.getElementById("sharedAbilityContainer");
+const sharedAbilityKey = document.getElementById("sharedAbilityKey");
+const passiveAbilityOverlay = document.getElementById("passiveAbilityOverlay");
+const passiveAbilityText = document.getElementById("passiveAbilityText");
+const passiveAbilityKey = document.getElementById("passiveAbilityKey");
+const passiveAbilityContainer = document.getElementById("passiveAbilityContainer");
+const killProgressContainer = document.getElementById("killProgressContainer");
+const killProgressText = document.getElementById("killProgressText");
+const matchEndOverlay = document.getElementById("matchEndOverlay");
+const matchEndCard = document.getElementById("matchEndCard");
+const matchEndTitle = document.getElementById("matchEndTitle");
+const matchEndScore = document.getElementById("matchEndScore");
 const secondaryWeaponName = document.getElementById("secondaryWeaponName");
 
-const MAP_COLOR = "#8383b8";
+const MAP_COLOR = "#d3d3d3";
 
 const playerImages = {
     King: new Image(),
     Ninja: new Image(),
     Berserker: new Image(),
+    Demoman: new Image(),
+    Reaver: new Image(),
     Grenade: new Image(),
+    Explosive: new Image(),
+    ReaverShard: new Image(),
 }
 const obstacleImages = {
     shield: new Image(),
@@ -31,7 +48,11 @@ const obstacleImages = {
 playerImages.King.src = 'sprites/king.png';
 playerImages.Ninja.src = 'sprites/ninja.png';
 playerImages.Berserker.src = 'sprites/berserker.png';
+playerImages.Demoman.src = 'sprites/demo.png';
+playerImages.Reaver.src = 'sprites/reaver.png';
 playerImages.Grenade.src = 'sprites/grenade.png';
+playerImages.Explosive.src = 'sprites/explosive.png';
+playerImages.ReaverShard.src = 'sprites/reaver_shard.png';
 obstacleImages.shield.src = 'sprites/shield.png';
 
 const socket = io();
@@ -43,6 +64,9 @@ var gameState = {
     obstacles: [],
 }
 
+const combatTexts = [];
+const explosiveEffects = [];
+
 var clientGameStateCache = {
     players: new Map(),
     bullets: new Map(),
@@ -53,10 +77,16 @@ var clientGameStateCache = {
 var mapRadius = 1500;
 var gameActive = false;
 var gameMode = '1v1'; // Track current game mode
+const ONE_VS_ONE_KILL_TARGET = 5;
+let matchEndTimeout = null;
+const SCORE_POPUP_VISIBLE_MS = 2600;
+const SCORE_POPUP_FADE_MS = 900;
+let scorePopupShownAt = 0;
+let lastScoreSignature = '';
 
 let playerSettings = loadCharacterSettings();
-const VALID_CHARACTERS = ['berserker', 'ninja', 'king'];
-const VALID_WEAPONS = ['m4', 'pistol', 'shotgun', 'sniper'];
+const VALID_CHARACTERS = ['berserker', 'ninja', 'king', 'demoman', 'reaver'];
+const VALID_WEAPONS = ['m4', 'pistol', 'shotgun', 'sniper', 'laser', 'taser'];
 const VALID_SHARED_ABILITIES = ['grenade', 'invisibility', 'shield'];
 let loadoutDraft = sanitizePlayerSettings(playerSettings);
 playerSettings = { ...loadoutDraft };
@@ -94,6 +124,10 @@ function main() {
         hideAllMenus();
         gameScreen.style.display = 'flex';
         gameActive = true;
+        matchEndOverlay.classList.remove('show');
+        matchEndCard.classList.remove('victory', 'defeat');
+        scorePopupShownAt = Date.now();
+        lastScoreSignature = '';
         resetClientCache();
     });
     socket.on('kill', handleKill);
@@ -104,6 +138,9 @@ function main() {
     socket.on('gotHit', handleGotHit);
     socket.on('firedWeapon', handleFiredWeapon);
     socket.on('swapWeapons', handleSwapWeapons);
+    socket.on('combatText', handleCombatText);
+    socket.on('matchEnded', handleMatchEnded);
+    socket.on('matchClosed', handleMatchClosed);
 
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keyup', handleKeyUp);
@@ -125,6 +162,13 @@ function showMainMenu() {
     menu.style.display = 'block';
     gameActive = false;
     gameMode = '1v1';
+    soundManager.stop('laser');
+    matchEndOverlay.classList.remove('show');
+    matchEndCard.classList.remove('victory', 'defeat');
+    if (matchEndTimeout) {
+        clearTimeout(matchEndTimeout);
+        matchEndTimeout = null;
+    }
 }
 
 function showCharacter() {
@@ -147,7 +191,7 @@ function showSearching() {
 }
 
 function getFallbackSecondary(primaryWeaponType) {
-    const fallbackOrder = ['pistol', 'm4', 'shotgun', 'sniper'];
+    const fallbackOrder = ['pistol', 'm4', 'shotgun', 'sniper', 'laser', 'taser'];
     return fallbackOrder.find((weapon) => weapon !== primaryWeaponType) || 'pistol';
 }
 
@@ -274,6 +318,8 @@ function resetClientCache() {
     clientGameStateCache.bullets.clear();
     clientGameStateCache.grenades.clear();
     clientGameStateCache.obstacles.clear();
+    combatTexts.length = 0;
+    explosiveEffects.length = 0;
 }
 
 function applyDeltaToGameState(delta) {
@@ -363,6 +409,10 @@ function applyDeltaToGameState(delta) {
     // Handle removed grenades
     if (delta.removedGrenades) {
         for (const grenadeId of delta.removedGrenades) {
+            const removedGrenade = clientGameStateCache.grenades.get(grenadeId);
+            if (removedGrenade?.kind === 'demoExplosive') {
+                spawnExplosiveEffect(removedGrenade.x, removedGrenade.y);
+            }
             gameState.grenades = gameState.grenades.filter(g => g.id !== grenadeId);
             clientGameStateCache.grenades.delete(grenadeId);
         }
@@ -406,7 +456,10 @@ function applyDeltaToGameState(delta) {
 
 function draw(gameState) {
     const thisPlayer = gameState.players.find(player => player.id === socket.id) ?? gameState.players[0];
-    if (!thisPlayer) return; // don't render if player not found
+    if (!thisPlayer) {
+        soundManager.stop('laser');
+        return; // don't render if player not found
+    }
     
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -429,11 +482,47 @@ function draw(gameState) {
     if (thisPlayer.secondaryWeapon?.name) {
         secondaryWeaponName.textContent = `Secondary: ${thisPlayer.secondaryWeapon.name}`;
     }
+
+    updateLaserLoopAudio(thisPlayer);
+
+    if (gameMode === '1v1') {
+        killProgressContainer.style.display = 'block';
+        const yourKills = thisPlayer.kills || 0;
+        const opponent = gameState.players.find((player) => player.id !== thisPlayer.id);
+        const opponentKills = opponent?.kills || 0;
+        const scoreSignature = `${yourKills}:${opponentKills}`;
+        if (scoreSignature !== lastScoreSignature) {
+            scorePopupShownAt = Date.now();
+            lastScoreSignature = scoreSignature;
+        }
+        killProgressText.textContent = `You ${yourKills}/${ONE_VS_ONE_KILL_TARGET} | Opp ${opponentKills}/${ONE_VS_ONE_KILL_TARGET}`;
+
+        const elapsed = Date.now() - scorePopupShownAt;
+        if (elapsed <= SCORE_POPUP_VISIBLE_MS) {
+            killProgressContainer.style.opacity = '1';
+        } else if (elapsed <= SCORE_POPUP_VISIBLE_MS + SCORE_POPUP_FADE_MS) {
+            const fadeProgress = (elapsed - SCORE_POPUP_VISIBLE_MS) / SCORE_POPUP_FADE_MS;
+            killProgressContainer.style.opacity = `${Math.max(0, 1 - fadeProgress)}`;
+        } else {
+            killProgressContainer.style.opacity = '0';
+        }
+    } else {
+        killProgressContainer.style.display = 'none';
+        killProgressContainer.style.opacity = '0';
+    }
     
     // update ability UI
     if (thisPlayer.specialAbility) {
         // Update ability name
-        abilityText.textContent = thisPlayer.specialAbility.name;
+        if (
+            typeof thisPlayer.specialAbility.charges === 'number' &&
+            typeof thisPlayer.specialAbility.maxCharges === 'number'
+        ) {
+            abilityText.textContent = `${thisPlayer.specialAbility.name} ${thisPlayer.specialAbility.charges}/${thisPlayer.specialAbility.maxCharges}`;
+        } else {
+            abilityText.textContent = thisPlayer.specialAbility.name;
+        }
+        abilityContainer.dataset.tooltip = `${thisPlayer.specialAbility.name}: Active class ability (E).`;
         
         // Update ability overlay based on cooldown
         if (thisPlayer.specialAbility.currentCooldown > 0) {
@@ -446,6 +535,9 @@ function draw(gameState) {
 
     if (thisPlayer.sharedAbility) {
         sharedAbilityText.textContent = thisPlayer.sharedAbility.name;
+        const sharedKey = 'C';
+        sharedAbilityKey.textContent = `(${sharedKey})`;
+        sharedAbilityContainer.dataset.tooltip = `${thisPlayer.sharedAbility.name}: Shared ability (${sharedKey}).`;
 
         if (thisPlayer.sharedAbility.currentCooldown > 0) {
             const cooldownPercent = (thisPlayer.sharedAbility.currentCooldown / thisPlayer.sharedAbility.cooldown) * 100;
@@ -453,6 +545,32 @@ function draw(gameState) {
         } else {
             sharedAbilityOverlay.style.height = '0%';
         }
+    }
+
+    if (thisPlayer.passiveAbility) {
+        passiveAbilityText.textContent = thisPlayer.passiveAbility.name;
+        const passiveKey = thisPlayer.passiveAbility.key || 'Passive';
+        passiveAbilityKey.textContent = `(${passiveKey})`;
+        passiveAbilityContainer.dataset.tooltip = `${thisPlayer.passiveAbility.name}: ${thisPlayer.passiveAbility.description || 'Passive class ability.'}`;
+
+        if (thisPlayer.passiveAbility.cooldown > 0 && thisPlayer.passiveAbility.currentCooldown > 0) {
+            const cooldownPercent = (thisPlayer.passiveAbility.currentCooldown / thisPlayer.passiveAbility.cooldown) * 100;
+            passiveAbilityOverlay.style.height = `${cooldownPercent}%`;
+        } else if (
+            thisPlayer.passiveAbility.isActive &&
+            thisPlayer.passiveAbility.currentDuration > 0 &&
+            thisPlayer.passiveAbility.duration > 0
+        ) {
+            const activePercent = (thisPlayer.passiveAbility.currentDuration / thisPlayer.passiveAbility.duration) * 100;
+            passiveAbilityOverlay.style.height = `${Math.max(0, Math.min(100, activePercent))}%`;
+        } else {
+            passiveAbilityOverlay.style.height = '0%';
+        }
+    } else {
+        passiveAbilityText.textContent = 'Passive';
+        passiveAbilityKey.textContent = '(Passive)';
+        passiveAbilityOverlay.style.height = '0%';
+        passiveAbilityContainer.dataset.tooltip = 'Class passive ability.';
     }
     
     const cameraX = thisPlayer.x - canvas.width / 2;
@@ -478,14 +596,59 @@ function draw(gameState) {
     }
 
     for (const grenade of gameState.grenades) {
-        drawGrenade(grenade);
+        drawGrenade(grenade, thisPlayer);
+    }
+    
+    for (const player of gameState.players) {
+        if (player.laserBeam) {
+            drawLaserBeam(player.laserBeam);
+        }
     }
     
     for (const player of gameState.players) {
         drawPlayer(player, thisPlayer);
     }
+    for (const player of gameState.players) {
+        if (player.reaverBolts?.length) {
+            drawReaverBolts(player);
+        }
+    }
+
+    drawExplosiveEffects();
+    drawCombatTexts();
     
    ctx.restore();
+}
+
+function drawCombatTexts() {
+    for (let i = combatTexts.length - 1; i >= 0; i--) {
+        const text = combatTexts[i];
+        text.life -= 1;
+        text.floatOffset += 0.8;
+        text.x += text.driftX;
+
+        if (text.life <= 0) {
+            combatTexts.splice(i, 1);
+            continue;
+        }
+
+        const alpha = Math.max(0, text.life / text.maxLife);
+        const y = text.y - text.floatOffset;
+        const isHealing = text.type === 'healing';
+        const prefix = isHealing ? '+' : '-';
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.font = 'bold 22px CustomFont';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = isHealing ? 'rgba(10, 60, 10, 0.9)' : 'rgba(60, 0, 0, 0.9)';
+        ctx.fillStyle = isHealing ? '#6cff85' : '#ff6a5f';
+        ctx.strokeText(`${prefix}${text.amount}`, text.x, y);
+        ctx.fillText(`${prefix}${text.amount}`, text.x, y);
+        ctx.restore();
+    }
 }
 
 function drawObstacle(obstacle) {
@@ -564,6 +727,31 @@ function drawPlayer(player, thisPlayer) {
     }
     
     if (player.name) {
+        if (player.name === 'King' && player.passiveAbility?.isActive) {
+            const baseAuraRadius = player.radius + 12;
+            ctx.save();
+            ctx.globalAlpha = 0.22;
+            ctx.fillStyle = '#ffd34d';
+            ctx.beginPath();
+            ctx.arc(0, 0, baseAuraRadius, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        if (player.name === 'King' && (player.kingAuraPulseTimer || 0) > 0) {
+            const pulseProgress = 1 - Math.max(0, Math.min(1, player.kingAuraPulseTimer / 20));
+            const pulseRadius = player.radius + 20 + pulseProgress * 240;
+            const pulseAlpha = Math.max(0, 0.45 - pulseProgress * 0.45);
+            ctx.save();
+            ctx.globalAlpha = pulseAlpha;
+            ctx.strokeStyle = '#ffcc33';
+            ctx.lineWidth = 6 - pulseProgress * 4;
+            ctx.beginPath();
+            ctx.arc(0, 0, pulseRadius, 0, 2 * Math.PI);
+            ctx.stroke();
+            ctx.restore();
+        }
+
         ctx.drawImage(playerImages[player.name], -player.radius, -player.radius, player.radius * 2, player.radius * 2);
     } else {
         ctx.beginPath();
@@ -584,11 +772,179 @@ function drawPlayer(player, thisPlayer) {
     } else if (player.dashing) {
         ctx.globalAlpha = 1.0;
     }
+
+    if (player.auraSlowed) {
+        ctx.globalAlpha = 0.24;
+        ctx.fillStyle = '#ffd84a';
+        ctx.beginPath();
+        ctx.arc(0, 0, player.radius, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+    }
+
+    if (
+        player.name === 'Demoman' &&
+        player.id === thisPlayer.id &&
+        typeof player.specialAbility?.holdRatio === 'number' &&
+        player.specialAbility.holdRatio > 0
+    ) {
+        const width = 44;
+        const height = 6;
+        const fillWidth = Math.max(0, Math.min(width, width * player.specialAbility.holdRatio));
+        const y = -player.radius - 22;
+
+        ctx.save();
+        ctx.rotate(-player.angle);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+        ctx.fillRect(-width / 2, y, width, height);
+        ctx.fillStyle = '#ffbf47';
+        ctx.fillRect(-width / 2, y, fillWidth, height);
+        ctx.strokeStyle = '#fff0ba';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(-width / 2, y, width, height);
+        ctx.restore();
+    }
+
+    if (player.stunned) {
+        ctx.save();
+        ctx.rotate(-player.angle);
+        drawStunStars(player);
+        ctx.restore();
+    }
+
+    if (player.reaverStacks > 0) {
+        ctx.save();
+        ctx.rotate(-player.angle);
+        if (player.reaverStacks >= 3) {
+            const pulse = 1 + Math.sin(Date.now() / 120) * 0.15;
+            const auraRadius = player.radius + 10 + pulse * 5;
+            ctx.globalAlpha = 0.38;
+            ctx.fillStyle = '#9a46ff';
+            ctx.beginPath();
+            ctx.arc(0, 0, auraRadius, 0, 2 * Math.PI);
+            ctx.fill();
+
+            ctx.globalAlpha = 0.7;
+            ctx.strokeStyle = '#c78bff';
+            ctx.lineWidth = 2.6;
+            ctx.beginPath();
+            ctx.arc(0, 0, auraRadius + 2, 0, 2 * Math.PI);
+            ctx.stroke();
+
+            ctx.globalAlpha = 0.45;
+            ctx.strokeStyle = '#6d1fd9';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, auraRadius + 7, 0, 2 * Math.PI);
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+        }
+        drawReaverStacks(player);
+        ctx.restore();
+    }
     
     ctx.restore();
 }
 
+function drawStunStars(player) {
+    const time = Date.now() / 180;
+    const baseY = -player.radius - 15;
+    const bob = Math.sin(time) * 2.6;
+
+    for (let i = 0; i < 3; i++) {
+        const angle = time + i * (Math.PI * 2 / 3);
+        const orbitX = Math.cos(angle) * 10;
+        const orbitY = Math.sin(angle) * 4 + bob;
+        const x = orbitX;
+        const y = baseY + orbitY;
+
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(time + i * 0.45);
+        ctx.fillStyle = '#ffd857';
+        ctx.strokeStyle = '#e6b91f';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(0, -4.8);
+        ctx.lineTo(1.9, -1.3);
+        ctx.lineTo(5.2, -1.0);
+        ctx.lineTo(2.4, 1.1);
+        ctx.lineTo(3.4, 4.8);
+        ctx.lineTo(0, 2.7);
+        ctx.lineTo(-3.4, 4.8);
+        ctx.lineTo(-2.4, 1.1);
+        ctx.lineTo(-5.2, -1.0);
+        ctx.lineTo(-1.9, -1.3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
+function drawReaverStacks(player) {
+    const total = 3;
+    const spacing = 11;
+    const startX = -spacing;
+    const y = -player.radius - 34;
+    for (let i = 0; i < total; i++) {
+        const x = startX + i * spacing;
+        ctx.beginPath();
+        ctx.arc(x, y, 4.2, 0, 2 * Math.PI);
+        const filled = i < (player.reaverStacks || 0);
+        ctx.fillStyle = filled ? '#a552ff' : 'rgba(255,255,255,0.2)';
+        ctx.fill();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = '#e4ccff';
+        ctx.stroke();
+    }
+}
+
+function drawReaverBolts(player) {
+    const now = Date.now();
+    for (const bolt of player.reaverBolts) {
+        if (!bolt || bolt.expiresAt < now) continue;
+        const life = Math.max(0, Math.min(1, (bolt.expiresAt - now) / 220));
+        ctx.save();
+        ctx.strokeStyle = '#b681ff';
+        ctx.shadowColor = '#cf9dff';
+        ctx.shadowBlur = 8;
+        ctx.globalAlpha = 0.7 + life * 0.3;
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        ctx.moveTo(player.x, player.y);
+        const midX = (player.x + bolt.targetX) / 2 + (Math.random() * 12 - 6);
+        const midY = (player.y + bolt.targetY) / 2 + (Math.random() * 12 - 6);
+        ctx.lineTo(midX, midY);
+        ctx.lineTo(bolt.targetX, bolt.targetY);
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
+function updateLaserLoopAudio(thisPlayer) {
+    const usingLaser = thisPlayer.primaryWeapon?.name === 'Laser Gun';
+    const beamActive = !!thisPlayer.laserBeam;
+
+    if (usingLaser && beamActive && gameActive) {
+        soundManager.playLoop('laser', 0.2);
+    } else {
+        soundManager.stop('laser');
+    }
+}
+
 function drawBullet(bullet) {
+    if (bullet.kind === 'reaverShard') {
+        const size = 24;
+        if (playerImages.ReaverShard.complete) {
+            ctx.save();
+            ctx.translate(bullet.x, bullet.y);
+            ctx.rotate(bullet.angle || 0);
+            ctx.drawImage(playerImages.ReaverShard, -size / 2, -size / 2, size, size);
+            ctx.restore();
+            return;
+        }
+    }
     ctx.beginPath();
     ctx.arc(bullet.x, bullet.y, bullet.radius, 0, 2 * Math.PI);
     ctx.fillStyle = bullet.color;
@@ -597,25 +953,94 @@ function drawBullet(bullet) {
     ctx.stroke(); 
 }
 
-function drawGrenade(grenade) {
-    const GRENADE_SIZE = 48;
+function drawLaserBeam(beam) {
+    ctx.save();
+    ctx.strokeStyle = beam.color || '#3fd7ff';
+    ctx.lineWidth = 5;
+    ctx.shadowColor = beam.color || '#3fd7ff';
+    ctx.shadowBlur = 12;
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(beam.startX, beam.startY);
+    ctx.lineTo(beam.endX, beam.endY);
+    ctx.stroke();
+
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = '#d8ffff';
+    ctx.beginPath();
+    ctx.moveTo(beam.startX, beam.startY);
+    ctx.lineTo(beam.endX, beam.endY);
+    ctx.stroke();
+    ctx.restore();
+}
+
+function drawGrenade(grenade, thisPlayer) {
+    const GRENADE_SIZE = grenade.kind === 'demoExplosive' ? 19 : 48;
+
+    if (
+        grenade.kind === 'demoExplosive' &&
+        grenade.hiddenForEnemies &&
+        grenade.ownerId &&
+        thisPlayer?.id !== grenade.ownerId
+    ) {
+        return;
+    }
 
     ctx.save();
     ctx.translate(grenade.x, grenade.y);
     ctx.rotate(grenade.spin || 0);
 
-    if (playerImages.Grenade.complete) {
-        ctx.drawImage(playerImages.Grenade, -GRENADE_SIZE / 2, -GRENADE_SIZE / 2, GRENADE_SIZE, GRENADE_SIZE);
+    const sprite = grenade.kind === 'demoExplosive' ? playerImages.Explosive : playerImages.Grenade;
+    if (sprite.complete) {
+        ctx.drawImage(sprite, -GRENADE_SIZE / 2, -GRENADE_SIZE / 2, GRENADE_SIZE, GRENADE_SIZE);
     } else {
         ctx.beginPath();
         ctx.arc(0, 0, grenade.radius || 20, 0, 2 * Math.PI);
-        ctx.fillStyle = '#75ff8f';
+        ctx.fillStyle = grenade.kind === 'demoExplosive' ? '#ff7f5f' : '#75ff8f';
         ctx.fill();
-        ctx.strokeStyle = '#2c8f44';
+        ctx.strokeStyle = grenade.kind === 'demoExplosive' ? '#8f3d2c' : '#2c8f44';
         ctx.stroke();
     }
 
     ctx.restore();
+}
+
+function spawnExplosiveEffect(x, y) {
+    explosiveEffects.push({
+        x,
+        y,
+        life: 18,
+        maxLife: 18,
+        maxRadius: 64
+    });
+}
+
+function drawExplosiveEffects() {
+    for (let i = explosiveEffects.length - 1; i >= 0; i--) {
+        const fx = explosiveEffects[i];
+        fx.life -= 1;
+        if (fx.life <= 0) {
+            explosiveEffects.splice(i, 1);
+            continue;
+        }
+
+        const progress = 1 - (fx.life / fx.maxLife);
+        const radius = 8 + progress * fx.maxRadius;
+        const alpha = Math.max(0, (1 - progress) * 0.75);
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = '#ffd44d';
+        ctx.beginPath();
+        ctx.arc(fx.x, fx.y, radius, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.globalAlpha = alpha * 0.9;
+        ctx.strokeStyle = '#fff2ad';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
+    }
 }
 
 function startGame() {
@@ -724,5 +1149,53 @@ function handleGotHit() {
 }
 
 function handleFiredWeapon() {
+    const thisPlayer = gameState.players.find((player) => player.id === socket.id);
+    if (thisPlayer?.primaryWeapon?.name === 'Laser Gun') {
+        return;
+    }
     soundManager.play("shoot", 0.25);
+}
+
+function handleCombatText(data) {
+    if (!data || typeof data.x !== 'number' || typeof data.y !== 'number') return;
+
+    const roundedAmount = Math.max(1, Math.round(data.amount || 0));
+    combatTexts.push({
+        type: data.type === 'healing' ? 'healing' : 'damage',
+        amount: roundedAmount,
+        x: data.x + (Math.random() * 16 - 8),
+        y: data.y,
+        driftX: Math.random() * 0.4 - 0.2,
+        life: 45,
+        maxLife: 45,
+        floatOffset: 0
+    });
+}
+
+function handleMatchEnded(data) {
+    if (!data) return;
+
+    gameActive = false;
+    soundManager.stop('laser');
+    matchEndTitle.textContent = data.youWon ? 'Victory' : 'Defeat';
+    matchEndScore.textContent = `${data.yourKills || 0} - ${data.opponentKills || 0}`;
+    matchEndCard.classList.remove('victory', 'defeat');
+    matchEndCard.classList.add(data.youWon ? 'victory' : 'defeat');
+    matchEndCard.style.animation = 'none';
+    // Force reflow so pop animation restarts each match end.
+    void matchEndCard.offsetWidth;
+    matchEndCard.style.animation = '';
+    matchEndOverlay.classList.add('show');
+
+    if (matchEndTimeout) {
+        clearTimeout(matchEndTimeout);
+    }
+    matchEndTimeout = setTimeout(() => {
+        showMainMenu();
+    }, 8000);
+}
+
+function handleMatchClosed() {
+    soundManager.stop('laser');
+    showMainMenu();
 }

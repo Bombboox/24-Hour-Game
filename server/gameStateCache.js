@@ -38,6 +38,22 @@ class GameStateCache {
                 enlarged: player.enlarged || false,
                 berserked: player.berserked || false,
                 dashing: player.dashing || false,
+                auraSlowed: player.auraSlowed || false,
+                kingAuraPulseTimer: Math.round((player.kingAuraPulseTimer || 0) * 100) / 100,
+                stunned: player.stunned || false,
+                reaverStacks: player.reaverStacks || 0,
+                reaverBolts: (player.reaverBolts || []).map((bolt) => ({
+                    targetX: Math.round((bolt.targetX || 0) * 100) / 100,
+                    targetY: Math.round((bolt.targetY || 0) * 100) / 100,
+                    expiresAt: bolt.expiresAt || 0
+                })),
+                laserBeam: player.laserBeam ? {
+                    startX: Math.round((player.laserBeam.startX || 0) * 100) / 100,
+                    startY: Math.round((player.laserBeam.startY || 0) * 100) / 100,
+                    endX: Math.round((player.laserBeam.endX || 0) * 100) / 100,
+                    endY: Math.round((player.laserBeam.endY || 0) * 100) / 100,
+                    color: player.laserBeam.color || '#3fd7ff'
+                } : null,
                 opacity: player.opacity,
                 invisible: player.invisible || false,
                 primaryWeapon: {
@@ -56,23 +72,40 @@ class GameStateCache {
                     name: player.specialAbility.name,
                     currentCooldown: Math.round(player.specialAbility.currentCooldown * 100) / 100,
                     cooldown: player.specialAbility.cooldown,
-                    isActive: player.specialAbility.isActive || false
+                    isActive: player.specialAbility.isActive || false,
+                    charges: player.specialAbility.charges,
+                    maxCharges: player.specialAbility.maxCharges,
+                    holdRatio: player.specialAbility?.isChargeBased
+                        ? Math.max(0, Math.min(1, (player.specialAbilityHoldTime || 0) / (player.specialAbility.maxThrowCharge || 1)))
+                        : 0
                 } : null,
                 sharedAbility: player.sharedAbility ? {
                     name: player.sharedAbility.name,
                     currentCooldown: Math.round(player.sharedAbility.currentCooldown * 100) / 100,
                     cooldown: player.sharedAbility.cooldown,
                     isActive: player.sharedAbility.isActive || false
+                } : null,
+                passiveAbility: player.passiveAbility ? {
+                    name: player.passiveAbility.name,
+                    description: player.passiveAbility.description || '',
+                    key: player.passiveAbility.key || 'Passive',
+                    duration: player.passiveAbility.duration || 0,
+                    currentCooldown: Math.round((player.passiveAbility.currentCooldown || 0) * 100) / 100,
+                    cooldown: player.passiveAbility.cooldown || 0,
+                    isActive: player.passiveAbility.isActive || false,
+                    currentDuration: Math.round((player.passiveAbility.currentDuration || 0) * 100) / 100
                 } : null
             })),
             bullets: gameState.bullets.map(bullet => ({
                 id: bullet.id || `${bullet.playerId}_${bullet.x}_${bullet.y}`,
                 x: Math.round(bullet.x * 100) / 100,
                 y: Math.round(bullet.y * 100) / 100,
+                angle: Math.round((bullet.angle || 0) * 1000) / 1000,
                 radius: bullet.radius,
                 color: bullet.color,
                 playerId: bullet.playerId,
-                active: bullet.active
+                active: bullet.active,
+                kind: bullet.kind || 'bullet'
             })),
             grenades: (gameState.grenades || []).map(grenade => ({
                 id: grenade.id,
@@ -80,7 +113,11 @@ class GameStateCache {
                 y: Math.round(grenade.y * 100) / 100,
                 radius: grenade.radius,
                 spin: Math.round(grenade.spin * 1000) / 1000,
-                active: grenade.active
+                active: grenade.active,
+                kind: grenade.kind || 'grenade',
+                ownerId: grenade.ownerId || null,
+                hiddenForEnemies: grenade.hiddenForEnemies || false,
+                isStationary: grenade.isStationary || false
             })),
             obstacles: gameState.obstacles.map(obstacle => ({
                 id: obstacle.id || `${obstacle.x}_${obstacle.y}_${obstacle.w}_${obstacle.h}`,
@@ -201,19 +238,34 @@ class GameStateCache {
                current.enlarged !== previous.enlarged ||
                current.berserked !== previous.berserked ||
                current.dashing !== previous.dashing ||
+               current.auraSlowed !== previous.auraSlowed ||
+               current.kingAuraPulseTimer !== previous.kingAuraPulseTimer ||
+               current.stunned !== previous.stunned ||
+               current.reaverStacks !== previous.reaverStacks ||
+               JSON.stringify(current.reaverBolts) !== JSON.stringify(previous.reaverBolts) ||
+               JSON.stringify(current.laserBeam) !== JSON.stringify(previous.laserBeam) ||
                current.kills !== previous.kills ||
                current.primaryWeapon.ammo !== previous.primaryWeapon.ammo ||
                current.primaryWeapon.isReloading !== previous.primaryWeapon.isReloading ||
                current.primaryWeapon.name !== previous.primaryWeapon.name ||
                current.secondaryWeapon.name !== previous.secondaryWeapon.name ||
                (current.specialAbility && previous.specialAbility && 
-                current.specialAbility.currentCooldown !== previous.specialAbility.currentCooldown) ||
+                (current.specialAbility.currentCooldown !== previous.specialAbility.currentCooldown ||
+                 current.specialAbility.charges !== previous.specialAbility.charges ||
+                 current.specialAbility.maxCharges !== previous.specialAbility.maxCharges ||
+                 current.specialAbility.holdRatio !== previous.specialAbility.holdRatio)) ||
                (current.specialAbility && !previous.specialAbility) ||
                (!current.specialAbility && previous.specialAbility) ||
                (current.sharedAbility && previous.sharedAbility && 
                 current.sharedAbility.currentCooldown !== previous.sharedAbility.currentCooldown) ||
                (current.sharedAbility && !previous.sharedAbility) ||
                (!current.sharedAbility && previous.sharedAbility) ||
+               (current.passiveAbility && previous.passiveAbility &&
+                (current.passiveAbility.currentCooldown !== previous.passiveAbility.currentCooldown ||
+                 current.passiveAbility.isActive !== previous.passiveAbility.isActive ||
+                 current.passiveAbility.currentDuration !== previous.passiveAbility.currentDuration)) ||
+               (current.passiveAbility && !previous.passiveAbility) ||
+               (!current.passiveAbility && previous.passiveAbility) ||
                current.invisible !== previous.invisible ||
                current.opacity !== previous.opacity;
     }
@@ -221,14 +273,19 @@ class GameStateCache {
     hasBulletChanged(current, previous) {
         return current.x !== previous.x ||
                current.y !== previous.y ||
-               current.active !== previous.active;
+               current.angle !== previous.angle ||
+               current.active !== previous.active ||
+               current.kind !== previous.kind;
     }
 
     hasGrenadeChanged(current, previous) {
         return current.x !== previous.x ||
                current.y !== previous.y ||
                current.spin !== previous.spin ||
-               current.active !== previous.active;
+               current.active !== previous.active ||
+               current.kind !== previous.kind ||
+               current.hiddenForEnemies !== previous.hiddenForEnemies ||
+               current.isStationary !== previous.isStationary;
     }
 
     hasObstacleChanged(current, previous) {

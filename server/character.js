@@ -1,5 +1,5 @@
 const { createCanvas, loadImage, Image } = require('canvas');
-const { SpecialAbility, Dash, Enlarge, Berserk } = require('./specialAbilities');
+const { Dash, Enlarge, Berserk, NinjaMomentum, KingGoldenDomain, BerserkerBloodrush, DemomanSatchel, DemomanMomentum, ReaverArcPassive, ReaverShards } = require('./specialAbilities');
 const { MAP_RADIUS } = require('./constants');
 const { circleRectCollision, circleObstacleCollision, resolveCircleObstacleOverlaps } = require('./collision');
 
@@ -32,6 +32,29 @@ class Character {
         this.invisible = options.invisible ?? false;
         this.swapCooldown = options.swapCooldown ?? 20;
         this.swapCooldownTimer = 0;
+        this.sharedAbilityKeyHeld = false;
+        this.passiveAbilityKeyHeld = false;
+        this.specialAbilityKeyHeld = false;
+        this.specialAbilityHoldTime = 0;
+        this.passiveAbility = options.passiveAbility || null;
+        this.passiveSpeedBonus = 1;
+        this.passiveSpeedDebuff = 1;
+        this.kingAuraSlowTimer = 0;
+        this.kingAuraSlowMultiplier = 0.75;
+        this.kingAuraPulseTimer = 0;
+        this.auraSlowed = false;
+        this.stunnedTimer = 0;
+        this.stunned = false;
+        this.laserBeam = null;
+        this.laserBeamTimer = 0;
+        this.forceVX = 0;
+        this.forceVY = 0;
+        this.reaverStackTimers = [];
+        this.reaverStacks = 0;
+        this.reaverStackDecayTimer = 0;
+        this.reaverSourceId = null;
+        this.reaverDotEffects = [];
+        this.reaverBolts = [];
     }
     
     takeDamage(damage, sourceId = null) {
@@ -52,9 +75,14 @@ class Character {
         this.secondaryWeapon = temp;
     }
     
+    getMoveSpeed() {
+        return this.speed * this.passiveSpeedBonus * this.passiveSpeedDebuff;
+    }
+
     move(dx, dy, obstacles = [], bullets = []) {
-        const newX = this.x + dx * this.speed;
-        const newY = this.y + dy * this.speed;
+        const effectiveSpeed = this.getMoveSpeed();
+        const newX = this.x + dx * effectiveSpeed;
+        const newY = this.y + dy * effectiveSpeed;
         
         let canMoveX = true;
         let canMoveY = true;
@@ -133,12 +161,42 @@ class Character {
             this.specialAbility.currentCooldown = 0;
             this.specialAbility.currentDuration = 0;
             this.specialAbility.isActive = false;
+            if (typeof this.specialAbility.onRespawn === 'function') {
+                this.specialAbility.onRespawn(this);
+            }
         }
         if(this.sharedAbility) {
             if(this.sharedAbility.isActive) this.sharedAbility.onEnd(this);
             this.sharedAbility.currentCooldown = 0;
             this.sharedAbility.currentDuration = 0;
             this.sharedAbility.isActive = false;
+        }
+        this.passiveSpeedBonus = 1;
+        this.passiveSpeedDebuff = 1;
+        this.kingAuraSlowTimer = 0;
+        this.kingAuraPulseTimer = 0;
+        this.auraSlowed = false;
+        this.stunnedTimer = 0;
+        this.stunned = false;
+        this.laserBeam = null;
+        this.laserBeamTimer = 0;
+        this.forceVX = 0;
+        this.forceVY = 0;
+        this.reaverStackTimers = [];
+        this.reaverStacks = 0;
+        this.reaverStackDecayTimer = 0;
+        this.reaverSourceId = null;
+        this.reaverDotEffects = [];
+        this.reaverBolts = [];
+        this.sharedAbilityKeyHeld = false;
+        this.passiveAbilityKeyHeld = false;
+        this.specialAbilityKeyHeld = false;
+        this.specialAbilityHoldTime = 0;
+        if (this.passiveAbility) {
+            this.passiveAbility.currentCooldown = 0;
+            this.passiveAbility.currentDuration = 0;
+            this.passiveAbility.isActive = false;
+            this.passiveAbility.onRespawn(this);
         }
         this.invisible = false;
         this.opacity = 1;
@@ -168,7 +226,6 @@ class Character {
             attempts++;
         }
         
-        // if we couldn't find a valid position after many attempts, use center
         if (!validPosition) {
             x = 0;
             y = 0;
@@ -185,12 +242,47 @@ class Character {
             this.specialAbility.currentCooldown = 0;
             this.specialAbility.currentDuration = 0;
             this.specialAbility.isActive = false;
+            if (typeof this.specialAbility.onRespawn === 'function') {
+                this.specialAbility.onRespawn(this);
+            }
+        }
+        if (gameState?.grenades) {
+            gameState.grenades = gameState.grenades.filter(
+                (grenade) => !(grenade.kind === 'demoExplosive' && grenade.ownerId === this.id)
+            );
         }
         if(this.sharedAbility) {
             if(this.sharedAbility.isActive) this.sharedAbility.onEnd(this);
             this.sharedAbility.currentCooldown = 0;
             this.sharedAbility.currentDuration = 0;
             this.sharedAbility.isActive = false;
+        }
+        this.passiveSpeedBonus = 1;
+        this.passiveSpeedDebuff = 1;
+        this.kingAuraSlowTimer = 0;
+        this.kingAuraPulseTimer = 0;
+        this.auraSlowed = false;
+        this.stunnedTimer = 0;
+        this.stunned = false;
+        this.laserBeam = null;
+        this.laserBeamTimer = 0;
+        this.forceVX = 0;
+        this.forceVY = 0;
+        this.reaverStackTimers = [];
+        this.reaverStacks = 0;
+        this.reaverStackDecayTimer = 0;
+        this.reaverSourceId = null;
+        this.reaverDotEffects = [];
+        this.reaverBolts = [];
+        this.sharedAbilityKeyHeld = false;
+        this.passiveAbilityKeyHeld = false;
+        this.specialAbilityKeyHeld = false;
+        this.specialAbilityHoldTime = 0;
+        if (this.passiveAbility) {
+            this.passiveAbility.currentCooldown = 0;
+            this.passiveAbility.currentDuration = 0;
+            this.passiveAbility.isActive = false;
+            this.passiveAbility.onRespawn(this);
         }
         this.invisible = false;
         this.opacity = 1;
@@ -205,7 +297,7 @@ class Ninja extends Character {
         super({
             ...options,
             speed: options.speed || 8,
-            maxHP: options.maxHP || 75,
+            maxHP: options.maxHP || 85,
             damage: options.damage || 1.2,
             radius: options.radius || 18,
             image: options.image || ninjaImage,
@@ -214,6 +306,7 @@ class Ninja extends Character {
         this.specialAbility = new Dash({
             character: this
         });
+        this.passiveAbility = new NinjaMomentum();
     }
     
     render(ctx) {
@@ -251,6 +344,7 @@ class King extends Character {
             name: options.name || 'King',
             specialAbility: new Enlarge()
         });
+        this.passiveAbility = new KingGoldenDomain();
     }
     
     render(ctx) {
@@ -282,13 +376,14 @@ class Berserker extends Character {
         super({
             ...options,
             speed: options.speed || 6,
-            maxHP: options.maxHP || 120,
+            maxHP: options.maxHP || 125,
             damage: options.damage || 2.0,
             radius: options.radius || 22,
             image: options.image || berserkerImage,
             name: options.name || 'Berserker',
             specialAbility: new Berserk()
         });
+        this.passiveAbility = new BerserkerBloodrush();
     }
     
     render(ctx) {
@@ -312,9 +407,49 @@ class Berserker extends Character {
     }
 }
 
+class Demoman extends Character {
+    constructor(options = {}) {
+        const demoImage = new Image();
+        demoImage.src = 'sprites/demo.png';
+
+        super({
+            ...options,
+            speed: options.speed || 5.5,
+            maxHP: options.maxHP || 150,
+            damage: options.damage || 1.15,
+            radius: options.radius || 24,
+            image: options.image || demoImage,
+            name: options.name || 'Demoman',
+            specialAbility: new DemomanSatchel()
+        });
+        this.passiveAbility = new DemomanMomentum();
+    }
+}
+
+class Reaver extends Character {
+    constructor(options = {}) {
+        const reaverImage = new Image();
+        reaverImage.src = 'sprites/reaver.png';
+
+        super({
+            ...options,
+            speed: options.speed || 5.8,
+            maxHP: options.maxHP || 125,
+            damage: options.damage || 1.0,
+            radius: options.radius || 22,
+            image: options.image || reaverImage,
+            name: options.name || 'Reaver',
+            specialAbility: new ReaverShards()
+        });
+        this.passiveAbility = new ReaverArcPassive();
+    }
+}
+
 module.exports = {
     Character,
     Ninja,
     King,
-    Berserker
+    Berserker,
+    Demoman,
+    Reaver
 }

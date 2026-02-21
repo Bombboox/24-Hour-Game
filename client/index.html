@@ -67,12 +67,47 @@
             min-width: 200px;
             text-align: center;
         }
+
+        .kill-progress-container {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            background: rgba(24, 24, 35, 0.8);
+            padding: 10px 16px;
+            border-radius: 12px;
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+            text-align: center;
+            min-width: 190px;
+        }
+
+        .kill-progress-title {
+            color: rgba(255, 255, 255, 0.92);
+            font-size: 11px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+
+        .kill-progress-score {
+            color: #ffffff;
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+        }
         
-        .ability-container {
+        .ability-dock {
             position: absolute;
             bottom: 20px;
             left: 20px;
+            display: flex;
+            gap: 12px;
             z-index: 100;
+        }
+
+        .ability-container {
             background: rgba(138, 43, 226, 0.8);
             padding: 10px;
             border-radius: 10px;
@@ -122,6 +157,39 @@
             text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
             opacity: 1;
             transition: opacity 0.3s ease;
+        }
+
+        .ability-tooltip {
+            position: relative;
+            cursor: default;
+        }
+
+        .ability-tooltip::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            left: 50%;
+            bottom: calc(100% + 10px);
+            transform: translateX(-50%);
+            min-width: 200px;
+            max-width: 280px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.88);
+            color: #fff9c4;
+            font-size: 11px;
+            line-height: 1.35;
+            text-transform: none;
+            letter-spacing: 0.2px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease;
+            text-align: left;
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .ability-tooltip:hover::after {
+            opacity: 1;
         }
         
         .ability-text.hidden {
@@ -431,10 +499,6 @@
         }
 
         .shared-ability-container {
-            position: absolute;
-            bottom: 20px;
-            left: 92px;
-            z-index: 100;
             background: rgba(46, 204, 113, 0.85);
             padding: 10px;
             border-radius: 10px;
@@ -442,6 +506,65 @@
             backdrop-filter: blur(10px);
             box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
             text-align: center;
+        }
+
+        .match-end-overlay {
+            position: absolute;
+            inset: 0;
+            z-index: 250;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: radial-gradient(circle at center, rgba(255, 255, 255, 0.08), rgba(0, 0, 0, 0.78));
+            backdrop-filter: blur(4px);
+        }
+
+        .match-end-overlay.show {
+            display: flex;
+            animation: endFadeIn 280ms ease-out;
+        }
+
+        .match-end-card {
+            min-width: min(90vw, 480px);
+            padding: 26px 24px;
+            text-align: center;
+            border-radius: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            box-shadow: 0 24px 50px rgba(0, 0, 0, 0.5);
+            transform: scale(0.82) translateY(16px);
+            opacity: 0;
+            animation: endPopIn 520ms cubic-bezier(0.18, 0.88, 0.28, 1.15) forwards;
+        }
+
+        .match-end-card.victory {
+            background: linear-gradient(150deg, rgba(40, 170, 90, 0.9), rgba(20, 105, 60, 0.85));
+        }
+
+        .match-end-card.defeat {
+            background: linear-gradient(150deg, rgba(185, 50, 50, 0.9), rgba(110, 25, 30, 0.88));
+        }
+
+        .match-end-title {
+            color: #ffffff;
+            font-size: 40px;
+            letter-spacing: 1.4px;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            text-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        }
+
+        .match-end-score {
+            color: rgba(255, 255, 255, 0.95);
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 14px;
+        }
+
+        .match-end-subtitle {
+            color: rgba(255, 255, 255, 0.82);
+            font-size: 14px;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
         }
         
         .searching-text {
@@ -464,6 +587,16 @@
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
+        }
+
+        @keyframes endFadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes endPopIn {
+            from { opacity: 0; transform: scale(0.82) translateY(16px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
         }
     </style>
 </head>
@@ -491,6 +624,8 @@
                 <button class="equip-option" data-type="weapon" data-value="pistol" onclick="selectEquip('weapon', 'pistol')">Pistol</button>
                 <button class="equip-option" data-type="weapon" data-value="shotgun" onclick="selectEquip('weapon', 'shotgun')">Shotgun</button>
                 <button class="equip-option" data-type="weapon" data-value="sniper" onclick="selectEquip('weapon', 'sniper')">Sniper</button>
+                <button class="equip-option" data-type="weapon" data-value="laser" onclick="selectEquip('weapon', 'laser')">Laser Gun</button>
+                <button class="equip-option" data-type="weapon" data-value="taser" onclick="selectEquip('weapon', 'taser')">Taser</button>
             </div>
         </div>
 
@@ -500,6 +635,8 @@
                 <button class="equip-option" data-type="secondary" data-value="pistol" onclick="selectEquip('secondary', 'pistol')">Pistol</button>
                 <button class="equip-option" data-type="secondary" data-value="shotgun" onclick="selectEquip('secondary', 'shotgun')">Shotgun</button>
                 <button class="equip-option" data-type="secondary" data-value="sniper" onclick="selectEquip('secondary', 'sniper')">Sniper</button>
+                <button class="equip-option" data-type="secondary" data-value="laser" onclick="selectEquip('secondary', 'laser')">Laser Gun</button>
+                <button class="equip-option" data-type="secondary" data-value="taser" onclick="selectEquip('secondary', 'taser')">Taser</button>
             </div>
         </div>
 
@@ -508,6 +645,8 @@
                 <button class="equip-option" data-type="character" data-value="berserker" onclick="selectEquip('character', 'berserker')">Berserker</button>
                 <button class="equip-option" data-type="character" data-value="ninja" onclick="selectEquip('character', 'ninja')">Ninja</button>
                 <button class="equip-option" data-type="character" data-value="king" onclick="selectEquip('character', 'king')">King</button>
+                <button class="equip-option" data-type="character" data-value="demoman" onclick="selectEquip('character', 'demoman')">Demoman</button>
+                <button class="equip-option" data-type="character" data-value="reaver" onclick="selectEquip('character', 'reaver')">Reaver</button>
             </div>
         </div>
         <div id="panelSharedAbility" class="equip-panel">
@@ -551,6 +690,10 @@
                 <div class="control-key">C</div>
                 <div class="control-action">Use Shared Ability</div>
             </div>
+            <div class="control-row">
+                <div class="control-key">Z</div>
+                <div class="control-action">Toggle Passive (King) / Detonate (Demoman)</div>
+            </div>
         </div>
         <button class="menu-button cancel-button" onclick="showMainMenu()">Back</button>
     </div>
@@ -569,19 +712,39 @@
             <div class="ammo-display" id="ammoDisplay">30/120</div>
             <div class="ammo-display" id="secondaryWeaponName">Secondary: Pistol</div>
         </div>
-        <div class="ability-container">
-            <div class="ability-key">(E)</div>
-            <div class="ability-box">
-                <div class="ability-overlay" id="abilityOverlay"></div>
-            </div>
-            <div class="ability-text" id="abilityText">Dash</div>
+        <div class="kill-progress-container" id="killProgressContainer">
+            <div class="kill-progress-title">First to 5</div>
+            <div class="kill-progress-score" id="killProgressText">0 / 5</div>
         </div>
-        <div class="shared-ability-container">
-            <div class="ability-key">(C)</div>
-            <div class="ability-box">
-                <div class="ability-overlay" id="sharedAbilityOverlay"></div>
+        <div class="ability-dock">
+            <div class="ability-container ability-tooltip" id="abilityContainer" data-tooltip="">
+                <div class="ability-key">(E)</div>
+                <div class="ability-box">
+                    <div class="ability-overlay" id="abilityOverlay"></div>
+                </div>
+                <div class="ability-text" id="abilityText">Dash</div>
             </div>
-            <div class="ability-text" id="sharedAbilityText">Grenade</div>
+            <div class="shared-ability-container ability-tooltip" id="sharedAbilityContainer" data-tooltip="">
+                <div class="ability-key" id="sharedAbilityKey">(C)</div>
+                <div class="ability-box">
+                    <div class="ability-overlay" id="sharedAbilityOverlay"></div>
+                </div>
+                <div class="ability-text" id="sharedAbilityText">Grenade</div>
+            </div>
+            <div class="ability-container ability-tooltip" id="passiveAbilityContainer" data-tooltip="">
+                <div class="ability-key" id="passiveAbilityKey">(Passive)</div>
+                <div class="ability-box">
+                    <div class="ability-overlay" id="passiveAbilityOverlay"></div>
+                </div>
+                <div class="ability-text" id="passiveAbilityText">Passive</div>
+            </div>
+        </div>
+        <div class="match-end-overlay" id="matchEndOverlay">
+            <div class="match-end-card" id="matchEndCard">
+                <div class="match-end-title" id="matchEndTitle">Victory</div>
+                <div class="match-end-score" id="matchEndScore">5 - 3</div>
+                <div class="match-end-subtitle">Returning to menu...</div>
+            </div>
         </div>
         <canvas id="canvas"></canvas>
     </div>

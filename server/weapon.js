@@ -1,4 +1,5 @@
 const { Bullet } = require('./bullet');
+const { circleRectCollision, circleRotatedRectCollision, hasRotation } = require('./collision');
 
 class Weapon {
     constructor(options = {}) {
@@ -280,10 +281,196 @@ class Pistol extends Weapon {
     }
 }
 
+class LaserGun extends Weapon {
+    constructor(options = {}) {
+        super({
+            damage: options.damage || 0.78,
+            fireCooldown: options.fireCooldown || 1.0,
+            offsetDistance: options.offsetDistance || 30,
+            ammo: options.ammo || 190,
+            maxAmmo: options.maxAmmo || 190,
+            reloadTime: options.reloadTime || 34.0,
+            name: 'Laser Gun',
+            ...options
+        });
+        this.range = options.range || 430;
+        this.rampStep = options.rampStep || 0.12;
+        this.maxDamage = options.maxDamage || 1.75;
+        this.baseDamage = this.damage;
+        this.currentDamage = this.baseDamage;
+        this.timeSinceLastHit = 1000;
+        this.rampResetDelay = options.rampResetDelay || 25;
+    }
+
+    update(deltaTime) {
+        super.update(deltaTime);
+        this.timeSinceLastHit += deltaTime;
+        if (this.timeSinceLastHit > this.rampResetDelay) {
+            this.currentDamage = this.baseDamage;
+        }
+    }
+
+    raycast(x, y, angle, gameState, playerId) {
+        const stepSize = 6;
+        const rayRadius = 2;
+        const dx = Math.cos(angle);
+        const dy = Math.sin(angle);
+
+        let endX = x + dx * this.range;
+        let endY = y + dy * this.range;
+        let hitPlayer = null;
+
+        for (let dist = 0; dist <= this.range; dist += stepSize) {
+            const px = x + dx * dist;
+            const py = y + dy * dist;
+
+            for (const obstacle of gameState.obstacles || []) {
+                if (obstacle.ownerId && obstacle.ownerId === playerId) {
+                    continue;
+                }
+                const hitObstacle = hasRotation(obstacle)
+                    ? circleRotatedRectCollision(px, py, rayRadius, obstacle)
+                    : circleRectCollision(px, py, rayRadius, obstacle);
+                if (hitObstacle) {
+                    endX = x + dx * Math.max(0, dist - stepSize);
+                    endY = y + dy * Math.max(0, dist - stepSize);
+                    return { endX, endY, hitPlayer: null };
+                }
+            }
+
+            for (const player of gameState.players || []) {
+                if (!player || player.id === playerId) continue;
+                const pdx = player.x - px;
+                const pdy = player.y - py;
+                if ((pdx * pdx + pdy * pdy) <= (player.radius + rayRadius) * (player.radius + rayRadius)) {
+                    endX = px;
+                    endY = py;
+                    hitPlayer = player;
+                    return { endX, endY, hitPlayer };
+                }
+            }
+        }
+
+        return { endX, endY, hitPlayer: null };
+    }
+
+    fire(x, y, targetAngle, gameState, playerId, io = null, owner = null) {
+        if (!this.canFire()) return false;
+
+        this.currentCooldown = this.fireCooldown;
+        this.angle = targetAngle;
+        this.ammo--;
+
+        if (this.ammo === 0) {
+            this.reload();
+        }
+
+        const { endX, endY, hitPlayer } = this.raycast(x, y, this.angle, gameState, playerId);
+
+        if (owner) {
+            owner.laserBeam = {
+                startX: x,
+                startY: y,
+                endX,
+                endY,
+                color: '#3fd7ff'
+            };
+            owner.laserBeamTimer = 2;
+        }
+
+        if (hitPlayer) {
+            const hpBefore = hitPlayer.HP;
+            hitPlayer.takeDamage(this.currentDamage, playerId);
+            const damageDealt = Math.max(0, hpBefore - hitPlayer.HP);
+            if (damageDealt > 0) {
+                this.timeSinceLastHit = 0;
+                this.currentDamage = Math.min(this.maxDamage, this.currentDamage + this.rampStep);
+
+                if (io && playerId) {
+                    io.to(playerId).emit('hit');
+                    io.to(hitPlayer.id).emit('gotHit');
+                    io.to(playerId).emit('combatText', {
+                        type: 'damage',
+                        amount: damageDealt,
+                        x: hitPlayer.x,
+                        y: hitPlayer.y - hitPlayer.radius - 10
+                    });
+                }
+
+                if (owner?.passiveAbility) {
+                    const healedAmount = owner.passiveAbility.onDamageDealt(owner, damageDealt, hitPlayer, gameState) || 0;
+                    if (healedAmount > 0 && io && playerId) {
+                        io.to(playerId).emit('combatText', {
+                            type: 'healing',
+                            amount: healedAmount,
+                            x: owner.x,
+                            y: owner.y - owner.radius - 10
+                        });
+                    }
+                }
+
+                hitPlayer.flashingTimer = 1;
+            }
+        }
+
+        return true;
+    }
+}
+
+class Taser extends Weapon {
+    constructor(options = {}) {
+        super({
+            damage: options.damage || 10,
+            bulletSpeed: options.bulletSpeed || 37,
+            fireCooldown: options.fireCooldown || 22,
+            spread: options.spread || Math.PI / 80,
+            offsetDistance: options.offsetDistance || 20,
+            ammo: options.ammo || 1,
+            maxAmmo: options.maxAmmo || 1,
+            reloadTime: options.reloadTime || 42,
+            name: 'Taser',
+            ...options
+        });
+        this.range = options.range || 250;
+        this.stunDuration = options.stunDuration || 30;
+    }
+
+    fire(x, y, targetAngle, gameState, playerId) {
+        if (!this.canFire()) return false;
+
+        this.currentCooldown = this.fireCooldown;
+        this.angle = targetAngle;
+        this.ammo--;
+
+        if (this.ammo === 0) {
+            this.reload();
+        }
+
+        const lifetime = this.range / this.bulletSpeed;
+        const bolt = new Bullet({
+            x,
+            y,
+            speed: this.bulletSpeed,
+            angle: this.angle + (Math.random() - 0.5) * this.spread,
+            damage: this.damage,
+            radius: 3,
+            color: '#4aa8ff',
+            stunDuration: this.stunDuration,
+            lifetime,
+            playerId
+        });
+        gameState.bullets.push(bolt);
+
+        return true;
+    }
+}
+
 module.exports = {
     Weapon,
     Shotgun,
     M4,
     Sniper,
-    Pistol
+    Pistol,
+    LaserGun,
+    Taser
 }
