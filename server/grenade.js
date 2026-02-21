@@ -222,7 +222,7 @@ class DemoExplosive {
         this.spin = options.spin || 0;
         this.angularVelocity = options.angularVelocity || 0.32;
         this.explosionRadius = options.explosionRadius || 155;
-        this.explosionDamage = options.explosionDamage || 20;
+        this.explosionDamage = options.explosionDamage || 25;
         this.explosionForce = options.explosionForce || 18;
     }
 
