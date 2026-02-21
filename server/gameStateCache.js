@@ -39,17 +39,30 @@ class GameStateCache {
                 berserked: player.berserked || false,
                 dashing: player.dashing || false,
                 opacity: player.opacity,
+                invisible: player.invisible || false,
                 primaryWeapon: {
                     ammo: player.primaryWeapon?.ammo || 0,
                     maxAmmo: player.primaryWeapon?.maxAmmo || 0,
                     isReloading: player.primaryWeapon?.isReloading || false,
                     name: player.primaryWeapon?.name || 'Weapon'
                 },
+                secondaryWeapon: {
+                    ammo: player.secondaryWeapon?.ammo || 0,
+                    maxAmmo: player.secondaryWeapon?.maxAmmo || 0,
+                    isReloading: player.secondaryWeapon?.isReloading || false,
+                    name: player.secondaryWeapon?.name || 'Weapon'
+                },
                 specialAbility: player.specialAbility ? {
                     name: player.specialAbility.name,
                     currentCooldown: Math.round(player.specialAbility.currentCooldown * 100) / 100,
                     cooldown: player.specialAbility.cooldown,
                     isActive: player.specialAbility.isActive || false
+                } : null,
+                sharedAbility: player.sharedAbility ? {
+                    name: player.sharedAbility.name,
+                    currentCooldown: Math.round(player.sharedAbility.currentCooldown * 100) / 100,
+                    cooldown: player.sharedAbility.cooldown,
+                    isActive: player.sharedAbility.isActive || false
                 } : null
             })),
             bullets: gameState.bullets.map(bullet => ({
@@ -61,6 +74,14 @@ class GameStateCache {
                 playerId: bullet.playerId,
                 active: bullet.active
             })),
+            grenades: (gameState.grenades || []).map(grenade => ({
+                id: grenade.id,
+                x: Math.round(grenade.x * 100) / 100,
+                y: Math.round(grenade.y * 100) / 100,
+                radius: grenade.radius,
+                spin: Math.round(grenade.spin * 1000) / 1000,
+                active: grenade.active
+            })),
             obstacles: gameState.obstacles.map(obstacle => ({
                 id: obstacle.id || `${obstacle.x}_${obstacle.y}_${obstacle.w}_${obstacle.h}`,
                 x: obstacle.x,
@@ -69,7 +90,8 @@ class GameStateCache {
                 h: obstacle.h,
                 color: obstacle.color,
                 health: obstacle.health,
-                image: obstacle.image
+                image: obstacle.image,
+                angle: obstacle.angle
             })),
             gameMode: gameState.gameMode || '1v1',
             frameNumber: ++this.frameNumber
@@ -87,8 +109,10 @@ class GameStateCache {
             gameMode: currentState.gameMode,
             players: [],
             bullets: [],
+            grenades: [],
             obstacles: [],
             removedBullets: [],
+            removedGrenades: [],
             removedObstacles: []
         };
 
@@ -141,10 +165,28 @@ class GameStateCache {
             }
         }
 
+        const currentGrenades = new Map(currentState.grenades.map(g => [g.id, g]));
+        const previousGrenades = new Map(previousState.grenades.map(g => [g.id, g]));
+
+        for (const [id, currentGrenade] of currentGrenades) {
+            const previousGrenade = previousGrenades.get(id);
+            if (!previousGrenade || this.hasGrenadeChanged(currentGrenade, previousGrenade)) {
+                delta.grenades.push(currentGrenade);
+            }
+        }
+
+        for (const [id] of previousGrenades) {
+            if (!currentGrenades.has(id)) {
+                delta.removedGrenades.push(id);
+            }
+        }
+
         const hasChanges = delta.players.length > 0 || 
                           delta.bullets.length > 0 || 
+                          delta.grenades.length > 0 ||
                           delta.obstacles.length > 0 ||
                           delta.removedBullets.length > 0 ||
+                          delta.removedGrenades.length > 0 ||
                           delta.removedObstacles.length > 0;
 
         return hasChanges ? delta : null;
@@ -162,10 +204,17 @@ class GameStateCache {
                current.kills !== previous.kills ||
                current.primaryWeapon.ammo !== previous.primaryWeapon.ammo ||
                current.primaryWeapon.isReloading !== previous.primaryWeapon.isReloading ||
+               current.primaryWeapon.name !== previous.primaryWeapon.name ||
+               current.secondaryWeapon.name !== previous.secondaryWeapon.name ||
                (current.specialAbility && previous.specialAbility && 
                 current.specialAbility.currentCooldown !== previous.specialAbility.currentCooldown) ||
                (current.specialAbility && !previous.specialAbility) ||
                (!current.specialAbility && previous.specialAbility) ||
+               (current.sharedAbility && previous.sharedAbility && 
+                current.sharedAbility.currentCooldown !== previous.sharedAbility.currentCooldown) ||
+               (current.sharedAbility && !previous.sharedAbility) ||
+               (!current.sharedAbility && previous.sharedAbility) ||
+               current.invisible !== previous.invisible ||
                current.opacity !== previous.opacity;
     }
 
@@ -175,11 +224,19 @@ class GameStateCache {
                current.active !== previous.active;
     }
 
+    hasGrenadeChanged(current, previous) {
+        return current.x !== previous.x ||
+               current.y !== previous.y ||
+               current.spin !== previous.spin ||
+               current.active !== previous.active;
+    }
+
     hasObstacleChanged(current, previous) {
         return current.x !== previous.x ||
                current.y !== previous.y ||
                current.w !== previous.w ||
                current.h !== previous.h ||
+               current.angle !== previous.angle ||
                current.color !== previous.color ||
                current.health !== previous.health ||
                current.image !== previous.image;

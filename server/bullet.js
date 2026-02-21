@@ -1,3 +1,5 @@
+const { circleRectCollision, circleRotatedRectCollision, hasRotation } = require('./collision');
+
 class Bullet {
     constructor(options = {x, y, radius, color, speed, angle, playerId, damage}) {
         this.x = options.x || 0;
@@ -33,8 +35,11 @@ class Bullet {
         this.y += dy;
         
         for (const obstacle of obstacles) {
-            if(obstacle.angle) {
-                if (this.checkCircleRotatedRectCollision(this.x, this.y, this.radius, obstacle)) {
+            if (obstacle.ownerId && obstacle.ownerId === this.playerId) {
+                continue;
+            }
+            if (hasRotation(obstacle)) {
+                if (circleRotatedRectCollision(this.x, this.y, this.radius, obstacle)) {
                     this.active = false;
                     this.destroy(gameState);
                     if(obstacle.health) {
@@ -42,7 +47,7 @@ class Bullet {
                     }
                     break;
                 }
-            } else if (this.checkCircleRectCollision(this.x, this.y, this.radius, obstacle)) {
+            } else if (circleRectCollision(this.x, this.y, this.radius, obstacle)) {
                 this.active = false;
                 this.destroy(gameState);
                 if(obstacle.health) {
@@ -51,39 +56,6 @@ class Bullet {
                 break;
             }
         }
-    }
-    
-    checkCircleRotatedRectCollision(circleX, circleY, circleRadius, rect) {
-        const dx = circleX - rect.x;
-        const dy = circleY - rect.y;
-        
-        const cos = Math.cos(-rect.angle);
-        const sin = Math.sin(-rect.angle);
-        const localX = dx * cos - dy * sin;
-        const localY = dx * sin + dy * cos;
-        
-        const halfW = rect.w / 2;
-        const halfH = rect.h / 2;
-        
-        const closestX = Math.max(-halfW, Math.min(localX, halfW));
-        const closestY = Math.max(-halfH, Math.min(localY, halfH));
-        
-        const distanceX = localX - closestX;
-        const distanceY = localY - closestY;
-        const distanceSquared = distanceX * distanceX + distanceY * distanceY;
-        
-        return distanceSquared < (circleRadius * circleRadius);
-    }
-
-    checkCircleRectCollision(circleX, circleY, circleRadius, rect) {
-        const closestX = Math.max(rect.x, Math.min(circleX, rect.x + rect.w));
-        const closestY = Math.max(rect.y, Math.min(circleY, rect.y + rect.h));
-        
-        const distanceX = circleX - closestX;
-        const distanceY = circleY - closestY;
-        const distanceSquared = distanceX * distanceX + distanceY * distanceY;
-        
-        return distanceSquared < (circleRadius * circleRadius);
     }
     
     render(ctx) {

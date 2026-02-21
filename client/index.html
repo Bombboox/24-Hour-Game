@@ -224,7 +224,7 @@
             pointer-events: none;
         }
         
-        #menu, #characterMenu, #searchingMenu {
+        #menu, #characterMenu, #searchingMenu, #controlsMenu {
             text-align: center;
             padding: 60px 40px;
             background: rgba(0, 174, 255, 0.452);
@@ -234,19 +234,57 @@
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
             max-width: 400px;
             width: 100%;
+            box-sizing: border-box;
+        }
+
+        #characterMenu {
+            max-width: 560px;
+            width: min(94vw, 560px);
+            padding: 44px 28px;
         }
         
-        #characterMenu, #searchingMenu {
+        #characterMenu, #searchingMenu, #controlsMenu {
             display: none;
         }
-        
-        #menu h1, #characterMenu h1, #searchingMenu h1 {
+
+        #menu h1, #characterMenu h1, #searchingMenu h1, #controlsMenu h1 {
             margin-bottom: 40px;
             color: white;
             font-size: 2.5em;
             font-weight: 300;
             text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
             letter-spacing: 2px;
+        }
+
+        .controls-grid {
+            display: grid;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .control-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 12px 16px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .control-key {
+            color: white;
+            font-size: 14px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .control-action {
+            color: white;
+            font-size: 14px;
+            opacity: 0.95;
         }
         
         .menu-button {
@@ -326,45 +364,84 @@
             box-shadow: 0 12px 30px rgba(231, 76, 60, 0.4);
         }
         
-        .dropdown-container {
-            margin: 20px 0;
-            text-align: left;
+        .equip-tabs {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-bottom: 16px;
         }
-        
-        .dropdown-label {
-            display: block;
+
+        .equip-tab {
+            padding: 8px 6px;
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.08);
             color: white;
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 8px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-        
-        .dropdown {
-            width: 100%;
-            padding: 15px 20px;
             font-family: 'CustomFont', 'Arial', sans-serif;
-            font-size: 16px;
-            color: white;
-            background: rgba(255, 255, 255, 0.1);
-            border: 2px solid rgba(255, 255, 255, 0.3);
-            border-radius: 25px;
+            font-size: 12px;
+            text-transform: uppercase;
             cursor: pointer;
-            transition: all 0.3s ease;
-            backdrop-filter: blur(5px);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
-        
-        .dropdown:focus {
-            outline: none;
-            border-color: rgba(255, 255, 255, 0.6);
-            background: rgba(255, 255, 255, 0.15);
+
+        .equip-tab.active {
+            background: rgba(255, 255, 255, 0.22);
+            border-color: rgba(255, 255, 255, 0.65);
         }
-        
-        .dropdown option {
-            background: #333;
+
+        .equip-panel {
+            display: none;
+        }
+
+        .equip-panel.active {
+            display: block;
+        }
+
+        .equip-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 18px;
+        }
+
+        .equip-option {
+            padding: 14px 12px;
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.08);
             color: white;
+            font-family: 'CustomFont', 'Arial', sans-serif;
+            font-size: 14px;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+        }
+
+        .equip-option:hover {
+            transform: translateY(-1px);
+            border-color: rgba(255, 255, 255, 0.45);
+        }
+
+        .equip-option.active {
+            border-color: #ffffff;
+            background: rgba(255, 255, 255, 0.24);
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+        }
+
+        .shared-ability-container {
+            position: absolute;
+            bottom: 20px;
+            left: 92px;
+            z-index: 100;
+            background: rgba(46, 204, 113, 0.85);
             padding: 10px;
+            border-radius: 10px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+            text-align: center;
         }
         
         .searching-text {
@@ -396,35 +473,49 @@
         <button class="menu-button" onclick="startGame()">1v1 Match</button>
         <button class="menu-button ffa-button" onclick="startFreeForAll()">Free For All</button>
         <button class="menu-button character-button" onclick="showCharacter()">Character</button>
+        <button class="menu-button" onclick="showControls()">Controls</button>
     </div>
     
     <div id="characterMenu">
         <h1>Character Setup</h1>
-        <div class="dropdown-container">
-            <label class="dropdown-label" for="characterSelect">Character</label>
-            <select id="characterSelect" class="dropdown">
-                <option value="berserker">Berserker</option>
-                <option value="ninja">Ninja</option>
-                <option value="king">King</option>
-            </select>
+        <div class="equip-tabs">
+            <button id="tabWeapon" class="equip-tab active" onclick="showEquipmentTab('weapon')">Weapon</button>
+            <button id="tabSecondary" class="equip-tab" onclick="showEquipmentTab('secondary')">Secondary</button>
+            <button id="tabCharacter" class="equip-tab" onclick="showEquipmentTab('character')">Character</button>
+            <button id="tabSharedAbility" class="equip-tab" onclick="showEquipmentTab('sharedAbility')">Ability</button>
         </div>
-        <div class="dropdown-container">
-            <label class="dropdown-label" for="weaponSelect">Primary Weapon</label>
-            <select id="weaponSelect" class="dropdown">
-                <option value="m4">M4</option>
-                <option value="pistol">Pistol</option>
-                <option value="shotgun">Shotgun</option>
-                <option value="sniper">Sniper</option>
-            </select>
+
+        <div id="panelWeapon" class="equip-panel active">
+            <div class="equip-grid">
+                <button class="equip-option" data-type="weapon" data-value="m4" onclick="selectEquip('weapon', 'm4')">M4</button>
+                <button class="equip-option" data-type="weapon" data-value="pistol" onclick="selectEquip('weapon', 'pistol')">Pistol</button>
+                <button class="equip-option" data-type="weapon" data-value="shotgun" onclick="selectEquip('weapon', 'shotgun')">Shotgun</button>
+                <button class="equip-option" data-type="weapon" data-value="sniper" onclick="selectEquip('weapon', 'sniper')">Sniper</button>
+            </div>
         </div>
-        <div class="dropdown-container">
-            <label class="dropdown-label" for="secondaryWeaponSelect">Secondary Weapon</label>
-            <select id="secondaryWeaponSelect" class="dropdown">
-                <option value="m4">M4</option>
-                <option value="pistol">Pistol</option>
-                <option value="shotgun">Shotgun</option>
-                <option value="sniper">Sniper</option>
-            </select>
+
+        <div id="panelSecondary" class="equip-panel">
+            <div class="equip-grid">
+                <button class="equip-option" data-type="secondary" data-value="m4" onclick="selectEquip('secondary', 'm4')">M4</button>
+                <button class="equip-option" data-type="secondary" data-value="pistol" onclick="selectEquip('secondary', 'pistol')">Pistol</button>
+                <button class="equip-option" data-type="secondary" data-value="shotgun" onclick="selectEquip('secondary', 'shotgun')">Shotgun</button>
+                <button class="equip-option" data-type="secondary" data-value="sniper" onclick="selectEquip('secondary', 'sniper')">Sniper</button>
+            </div>
+        </div>
+
+        <div id="panelCharacter" class="equip-panel">
+            <div class="equip-grid">
+                <button class="equip-option" data-type="character" data-value="berserker" onclick="selectEquip('character', 'berserker')">Berserker</button>
+                <button class="equip-option" data-type="character" data-value="ninja" onclick="selectEquip('character', 'ninja')">Ninja</button>
+                <button class="equip-option" data-type="character" data-value="king" onclick="selectEquip('character', 'king')">King</button>
+            </div>
+        </div>
+        <div id="panelSharedAbility" class="equip-panel">
+            <div class="equip-grid">
+                <button class="equip-option" data-type="sharedAbility" data-value="grenade" onclick="selectEquip('sharedAbility', 'grenade')">Grenade</button>
+                <button class="equip-option" data-type="sharedAbility" data-value="invisibility" onclick="selectEquip('sharedAbility', 'invisibility')">Invisibility</button>
+                <button class="equip-option" data-type="sharedAbility" data-value="shield" onclick="selectEquip('sharedAbility', 'shield')">Shield</button>
+            </div>
         </div>
         <button class="menu-button" onclick="save()">Save</button>
         <button class="menu-button cancel-button" onclick="showMainMenu()">Back</button>
@@ -435,6 +526,33 @@
         <div class="searching-text">Searching for opponent...</div>
         <div class="spinner"></div>
         <button class="menu-button cancel-button" onclick="cancelSearch()">Cancel</button>
+    </div>
+
+    <div id="controlsMenu">
+        <h1>Controls</h1>
+        <div class="controls-grid">
+            <div class="control-row">
+                <div class="control-key">WASD</div>
+                <div class="control-action">Move</div>
+            </div>
+            <div class="control-row">
+                <div class="control-key">Q</div>
+                <div class="control-action">Swap Weapons</div>
+            </div>
+            <div class="control-row">
+                <div class="control-key">E</div>
+                <div class="control-action">Use Special Ability</div>
+            </div>
+            <div class="control-row">
+                <div class="control-key">R</div>
+                <div class="control-action">Reload</div>
+            </div>
+            <div class="control-row">
+                <div class="control-key">C</div>
+                <div class="control-action">Use Shared Ability</div>
+            </div>
+        </div>
+        <button class="menu-button cancel-button" onclick="showMainMenu()">Back</button>
     </div>
     
     <div id="gameScreen">
@@ -449,6 +567,7 @@
             <div class="weapon-label">Weapon</div>
             <div class="weapon-name" id="weaponName">M4</div>
             <div class="ammo-display" id="ammoDisplay">30/120</div>
+            <div class="ammo-display" id="secondaryWeaponName">Secondary: Pistol</div>
         </div>
         <div class="ability-container">
             <div class="ability-key">(E)</div>
@@ -456,6 +575,13 @@
                 <div class="ability-overlay" id="abilityOverlay"></div>
             </div>
             <div class="ability-text" id="abilityText">Dash</div>
+        </div>
+        <div class="shared-ability-container">
+            <div class="ability-key">(C)</div>
+            <div class="ability-box">
+                <div class="ability-overlay" id="sharedAbilityOverlay"></div>
+            </div>
+            <div class="ability-text" id="sharedAbilityText">Grenade</div>
         </div>
         <canvas id="canvas"></canvas>
     </div>

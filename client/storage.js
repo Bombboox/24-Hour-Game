@@ -1,8 +1,9 @@
-function saveCharacterSettings(characterType, weaponType, secondaryWeaponType) {
+function saveCharacterSettings(characterType, weaponType, secondaryWeaponType, sharedAbilityType) {
     const settings = {
         characterType: characterType,
         weaponType: weaponType,
-        secondaryWeaponType: secondaryWeaponType
+        secondaryWeaponType: secondaryWeaponType,
+        sharedAbilityType: sharedAbilityType
     };
     
     localStorage.setItem('playerSettings', JSON.stringify(settings));
@@ -27,7 +28,8 @@ function getDefaultSettings() {
     return {
         characterType: 'berserker',
         weaponType: 'm4',
-        secondaryWeaponType: 'pistol'
+        secondaryWeaponType: 'pistol',
+        sharedAbilityType: 'grenade'
     };
 }
 

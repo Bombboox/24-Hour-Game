@@ -1,6 +1,7 @@
 const { createCanvas, loadImage, Image } = require('canvas');
 const { SpecialAbility, Dash, Enlarge, Berserk } = require('./specialAbilities');
 const { MAP_RADIUS } = require('./constants');
+const { circleRectCollision, circleObstacleCollision, resolveCircleObstacleOverlaps } = require('./collision');
 
 class Character {
     constructor(options = {x, y, radius, image, speed, maxHP, primaryWeapon, angle, damage, id}) {
@@ -20,18 +21,24 @@ class Character {
         this.name = options.name || 'Player';
         this.isFiring = false;
         this.flashingTimer = 0;
+        this.lastDamagedBy = options.lastDamagedBy || null;
         this.spawnX = options.spawnX || 0;
         this.spawnY = options.spawnY || 0;
         this.kills = options.kills || 0;
         this.specialAbility = options.specialAbility || null;
+        this.sharedAbility = options.sharedAbility || null;
         this.defense = options.defense ?? 1;
         this.opacity = options.opacity ?? 1;
+        this.invisible = options.invisible ?? false;
         this.swapCooldown = options.swapCooldown ?? 20;
         this.swapCooldownTimer = 0;
     }
     
-    takeDamage(damage) {
+    takeDamage(damage, sourceId = null) {
         this.HP -= damage * this.defense;
+        if (sourceId) {
+            this.lastDamagedBy = sourceId;
+        }
         if (this.HP < 0) {
             this.HP = 0;
         }
@@ -53,11 +60,11 @@ class Character {
         let canMoveY = true;
         
         for (const obstacle of obstacles) {
-            if (this.checkCircleRectCollision(newX, this.y, this.radius, obstacle)) {
+            if (circleObstacleCollision(newX, this.y, this.radius, obstacle)) {
                 canMoveX = false;
             }
             
-            if (this.checkCircleRectCollision(this.x, newY, this.radius, obstacle)) {
+            if (circleObstacleCollision(this.x, newY, this.radius, obstacle)) {
                 canMoveY = false;
             }
         }
@@ -68,17 +75,15 @@ class Character {
         if (canMoveY) {
             this.y = newY;
         }
+
+        // If already intersecting (e.g. spawned inside a shield), push out.
+        const resolved = resolveCircleObstacleOverlaps(this.x, this.y, this.radius, obstacles);
+        this.x = resolved.x;
+        this.y = resolved.y;
     }
     
     checkCircleRectCollision(circleX, circleY, circleRadius, rect) {
-        const closestX = Math.max(rect.x, Math.min(circleX, rect.x + rect.w));
-        const closestY = Math.max(rect.y, Math.min(circleY, rect.y + rect.h));
-        
-        const distanceX = circleX - closestX;
-        const distanceY = circleY - closestY;
-        const distanceSquared = distanceX * distanceX + distanceY * distanceY;
-        
-        return distanceSquared < (circleRadius * circleRadius);
+        return circleRectCollision(circleX, circleY, circleRadius, rect);
     }
     
     checkCircleCircleCollision(x1, y1, radius1, x2, y2, radius2) {
@@ -113,6 +118,11 @@ class Character {
         this.primaryWeapon.reload();
     }
 
+    breakInvisibility(gameState) {
+        if (!this.sharedAbility || this.sharedAbility.name !== 'Invisibility') return;
+        this.sharedAbility.cancel(this, gameState);
+    }
+
     respawn() {
         this.x = this.spawnX;
         this.y = this.spawnY;
@@ -124,6 +134,14 @@ class Character {
             this.specialAbility.currentDuration = 0;
             this.specialAbility.isActive = false;
         }
+        if(this.sharedAbility) {
+            if(this.sharedAbility.isActive) this.sharedAbility.onEnd(this);
+            this.sharedAbility.currentCooldown = 0;
+            this.sharedAbility.currentDuration = 0;
+            this.sharedAbility.isActive = false;
+        }
+        this.invisible = false;
+        this.opacity = 1;
     }
 
     randomSpawn(gameState) {
@@ -141,7 +159,7 @@ class Character {
             // check if position overlaps with any obstacles
             validPosition = true;
             for (const obstacle of gameState.obstacles) {
-                if (this.checkCircleRectCollision(x, y, this.radius, obstacle)) {
+                if (circleObstacleCollision(x, y, this.radius, obstacle)) {
                     validPosition = false;
                     break;
                 }
@@ -168,6 +186,14 @@ class Character {
             this.specialAbility.currentDuration = 0;
             this.specialAbility.isActive = false;
         }
+        if(this.sharedAbility) {
+            if(this.sharedAbility.isActive) this.sharedAbility.onEnd(this);
+            this.sharedAbility.currentCooldown = 0;
+            this.sharedAbility.currentDuration = 0;
+            this.sharedAbility.isActive = false;
+        }
+        this.invisible = false;
+        this.opacity = 1;
     }
 }
 

@@ -8,6 +8,7 @@ const msgpack = require('msgpack-lite');
 const { createGameState, gameLoop, generateNewMap } = require('./game');
 const { Berserker, Ninja, King } = require('./character');
 const { M4, Sniper, Pistol, Shotgun } = require('./weapon');
+const { Grenade, Invisibility, ShieldBarrier } = require('./specialAbilities');
 const { MAP_RADIUS, FRAME_RATE } = require('./constants');
 const { GameStateCache } = require('./gameStateCache');
 const { Worker } = require('worker_threads');
@@ -65,6 +66,15 @@ const SECONDARY_WEAPON_CLASSES = {
 const VALID_CHARACTERS = Object.keys(CHARACTER_CLASSES);
 const VALID_WEAPONS = Object.keys(WEAPON_CLASSES);
 const VALID_SECONDARY_WEAPONS = Object.keys(SECONDARY_WEAPON_CLASSES);
+const SHARED_ABILITY_CLASSES = {
+    grenade: Grenade,
+    invisibility: Invisibility,
+    shield: ShieldBarrier
+};
+const VALID_SHARED_ABILITIES = Object.keys(SHARED_ABILITY_CLASSES);
+const DEFAULT_PRIMARY_WEAPON = 'm4';
+const DEFAULT_SECONDARY_WEAPON = 'pistol';
+const DEFAULT_SHARED_ABILITY = 'grenade';
 
 // 1v1 spawns
 const SPAWN_POSITIONS = {
@@ -254,14 +264,44 @@ function makeID(length) {
     return result;
 }
 
-function createPlayer(characterType, weaponType, secondaryWeaponType, playerNumber, id, spawnX = null, spawnY = null) {
+function getFallbackSecondaryWeapon(primaryWeaponType) {
+    const fallbackOrder = [DEFAULT_SECONDARY_WEAPON, DEFAULT_PRIMARY_WEAPON, 'shotgun', 'sniper'];
+    return fallbackOrder.find((weapon) => weapon !== primaryWeaponType) || DEFAULT_SECONDARY_WEAPON;
+}
+
+function normalizeLoadout(weaponType, secondaryWeaponType) {
+    const primaryType = weaponType?.toLowerCase();
+    const secondaryType = secondaryWeaponType?.toLowerCase();
+
+    const normalizedPrimary = VALID_WEAPONS.includes(primaryType) ? primaryType : DEFAULT_PRIMARY_WEAPON;
+    let normalizedSecondary = VALID_SECONDARY_WEAPONS.includes(secondaryType)
+        ? secondaryType
+        : getFallbackSecondaryWeapon(normalizedPrimary);
+
+    if (normalizedSecondary === normalizedPrimary) {
+        normalizedSecondary = getFallbackSecondaryWeapon(normalizedPrimary);
+    }
+
+    return {
+        primary: normalizedPrimary,
+        secondary: normalizedSecondary
+    };
+}
+
+function normalizeSharedAbility(sharedAbilityType) {
+    const sharedType = sharedAbilityType?.toLowerCase();
+    return VALID_SHARED_ABILITIES.includes(sharedType) ? sharedType : DEFAULT_SHARED_ABILITY;
+}
+
+function createPlayer(characterType, weaponType, secondaryWeaponType, sharedAbilityType, playerNumber, id, spawnX = null, spawnY = null) {
     const charType = characterType?.toLowerCase();
-    const weapType = weaponType?.toLowerCase();
-    const secondaryWeapType = secondaryWeaponType?.toLowerCase();
+    const normalizedLoadout = normalizeLoadout(weaponType, secondaryWeaponType);
+    const normalizedSharedAbility = normalizeSharedAbility(sharedAbilityType);
 
     const CharacterClass = CHARACTER_CLASSES[charType] || Berserker;
-    const WeaponClass = WEAPON_CLASSES[weapType] || M4;
-    const SecondaryWeaponClass = SECONDARY_WEAPON_CLASSES[secondaryWeapType] || Pistol;
+    const WeaponClass = WEAPON_CLASSES[normalizedLoadout.primary] || M4;
+    const SecondaryWeaponClass = SECONDARY_WEAPON_CLASSES[normalizedLoadout.secondary] || Pistol;
+    const SharedAbilityClass = SHARED_ABILITY_CLASSES[normalizedSharedAbility] || Grenade;
 
     const spawnPos = SPAWN_POSITIONS[playerNumber];
     const x = spawnPos ? spawnPos.x : spawnX;
@@ -273,6 +313,7 @@ function createPlayer(characterType, weaponType, secondaryWeaponType, playerNumb
         id,
         primaryWeapon: new WeaponClass(),
         secondaryWeapon: new SecondaryWeaponClass(),
+        sharedAbility: new SharedAbilityClass(),
         spawnX: x,
         spawnY: y
     };
@@ -350,7 +391,7 @@ io.on('connection', (socket) => {
                 socket.join(roomName);
                 socket.number = 2;
                 
-                const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, 2, socket.id);
+                const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, data?.sharedAbilityType, 2, socket.id);
                 state.get(roomName).players.push(player);
                 
                 socket.emit('init', 2);
@@ -370,7 +411,7 @@ io.on('connection', (socket) => {
                 state.get(roomName).obstacles = generateNewMap();
                 gameStateCaches.set(roomName, new GameStateCache());
                 
-                const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, 1, socket.id);
+                const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, data?.sharedAbilityType, 1, socket.id);
                 state.get(roomName).players.push(player);
 
                 socket.join(roomName);
@@ -417,7 +458,7 @@ io.on('connection', (socket) => {
             socket.number = getRandomPlayerNumber();
 
             const spawnPos = getRandomSpawnPosition();
-            const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, socket.number, socket.id, spawnPos.x, spawnPos.y);
+            const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, data?.sharedAbilityType, socket.number, socket.id, spawnPos.x, spawnPos.y);
             player.randomSpawn(state.get(FREE_FOR_ALL_ROOM));
             state.get(FREE_FOR_ALL_ROOM).players.push(player);
 

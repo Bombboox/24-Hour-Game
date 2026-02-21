@@ -1,4 +1,5 @@
 const { Shield } = require('./obstacle');
+const { GrenadeProjectile } = require('./grenade');
 
 class SpecialAbility {
     constructor(options = {}) {
@@ -44,6 +45,14 @@ class SpecialAbility {
 
     onUpdate(character) {
         // override this :3
+    }
+
+    cancel(character, gameState) {
+        if (!this.isActive) return false;
+        this.isActive = false;
+        this.currentDuration = 0;
+        this.onEnd(character, gameState);
+        return true;
     }
 }
 
@@ -136,6 +145,14 @@ class Berserk extends SpecialAbility {
             character.primaryWeapon.fireCooldown = this.originalFireCooldown * this.fireCooldownMultiplier;
             character.primaryWeapon.ammo = 9999;
         }
+        if (character.secondaryWeapon) {
+            this.originalSecondaryDamage = character.secondaryWeapon.damage;
+            this.originalSecondaryFireCooldown = character.secondaryWeapon.fireCooldown;
+
+            character.secondaryWeapon.damage = this.originalSecondaryDamage * this.damageMultiplier;
+            character.secondaryWeapon.fireCooldown = this.originalSecondaryFireCooldown * this.fireCooldownMultiplier;
+            character.secondaryWeapon.ammo = 9999;
+        }
         character.berserked = true;
     }
 
@@ -144,6 +161,11 @@ class Berserk extends SpecialAbility {
             character.primaryWeapon.damage = this.originalDamage;
             character.primaryWeapon.fireCooldown = this.originalFireCooldown;
             character.primaryWeapon.ammo = character.primaryWeapon.maxAmmo;
+        }
+        if (character.secondaryWeapon && this.originalSecondaryDamage !== undefined && this.originalSecondaryFireCooldown !== undefined) {
+            character.secondaryWeapon.damage = this.originalSecondaryDamage;
+            character.secondaryWeapon.fireCooldown = this.originalSecondaryFireCooldown;
+            character.secondaryWeapon.ammo = character.secondaryWeapon.maxAmmo;
         }
         character.berserked = false;
     }
@@ -186,4 +208,94 @@ class ShieldAbility extends SpecialAbility {
     }
 }
 
-module.exports = { SpecialAbility, Dash, Enlarge, Berserk };
+class Grenade extends SpecialAbility {
+    constructor(options = {}) {
+        super({
+            name: "Grenade",
+            cooldown: 180,
+            duration: 0,
+            ...options
+        });
+        this.initialSpeed = options.initialSpeed ?? 16.5;
+        this.acceleration = options.acceleration ?? 2.25;
+        this.accelerationTime = options.accelerationTime ?? 18;
+        this.spinSpeed = options.spinSpeed ?? 0.45;
+    }
+
+    onStart(character, gameState) {
+        if (!gameState?.grenades) return;
+
+        const spawnOffset = character.radius + 16;
+        const grenade = new GrenadeProjectile({
+            x: character.x + Math.cos(character.angle) * spawnOffset,
+            y: character.y + Math.sin(character.angle) * spawnOffset,
+            angle: character.angle,
+            ownerId: character.id,
+            velocityX: Math.cos(character.angle) * this.initialSpeed,
+            velocityY: Math.sin(character.angle) * this.initialSpeed,
+            acceleration: this.acceleration,
+            accelerationTime: this.accelerationTime,
+            angularVelocity: this.spinSpeed
+        });
+
+        gameState.grenades.push(grenade);
+    }
+}
+
+class ShieldBarrier extends SpecialAbility {
+    constructor(options = {}) {
+        super({
+            name: "Shield",
+            cooldown: 360,
+            duration: 0,
+            ...options
+        });
+    }
+
+    onStart(character, gameState) {
+        if (!gameState?.obstacles) return;
+
+        const spawnOffset = character.radius + 20;
+        const shieldX = character.x + Math.cos(character.angle) * spawnOffset;
+        const shieldY = character.y + Math.sin(character.angle) * spawnOffset;
+
+        const shieldSize = 50;
+
+        const shield = new Shield({
+            x: shieldX,
+            y: shieldY,
+            w: shieldSize,
+            h: shieldSize * 10/3,
+            angle: character.angle,
+            color: 'rgba(50, 180, 255, 0.25)',
+            ownerId: character.id,
+            health: 120,
+            duration: 750
+        });
+
+        gameState.obstacles.push(shield);
+    }
+}
+
+class Invisibility extends SpecialAbility {
+    constructor(options = {}) {
+        super({
+            name: "Invisibility",
+            cooldown: 260,
+            duration: 250,
+            ...options
+        });
+    }
+
+    onStart(character) {
+        character.invisible = true;
+        character.opacity = 0;
+    }
+
+    onEnd(character) {
+        character.invisible = false;
+        character.opacity = 1;
+    }
+}
+
+module.exports = { SpecialAbility, Dash, Enlarge, Berserk, Grenade, Invisibility, ShieldBarrier };

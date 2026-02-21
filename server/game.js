@@ -7,11 +7,14 @@ function createGameState() {
     return {
         players: [],
         bullets: [],
+        grenades: [],
         obstacles: [],
     }
 }
 
 function gameLoop(gameState, deltaTime, io) {
+    let shouldRespawnAll = false;
+
     for (const player of gameState.players) {
         let dx = 0;
         let dy = 0;
@@ -29,31 +32,42 @@ function gameLoop(gameState, deltaTime, io) {
             dx = 1;
         }
 
-        if (player.inputs[82] || player.inputs[114]) {
-            if(player.primaryWeapon.reload()) {
-                io.to(player.id).emit('reload');
-            }
-        }
-
         if (player.inputs[81] || player.inputs[113]) { 
             if(player.swapWeapons()) {
                 io.to(player.id).emit('swapWeapons', player.primaryWeapon.name);
             }
         }
 
-        if (player.inputs[69]) {
+        const specialPressed = !!player.inputs[69];
+        if (specialPressed) {
             if(!player.specialAbility) continue;
+            player.breakInvisibility(gameState);
             
-            if(player.specialAbility.initiate(player)) {
+            if(player.specialAbility.initiate(player, gameState)) {
                 io.to(player.id).emit('specialAbility');
             }
         }
 
-        if (player.inputs[82] || player.inputs[114]) {
-            if(!player.secondSpecialAbility) continue;
+        const reloadPressed = !!(player.inputs[82] || player.inputs[114]);
+        if (reloadPressed) {
+            if (player.primaryWeapon.reload()) {
+                io.to(player.id).emit('reload');
+            }
+        }
+
+        const sharedPressed = !!(player.inputs[67] || player.inputs[99]);
+        const sharedJustPressed = sharedPressed && !player.sharedAbilityKeyHeld;
+        player.sharedAbilityKeyHeld = sharedPressed;
+
+        if (sharedJustPressed) {
+            if(!player.sharedAbility) continue;
             
-            if(player.secondSpecialAbility.initiate(player, gameState)) {
-                io.to(player.id).emit('specialAbility2');
+            if (player.sharedAbility.name !== 'Invisibility' || player.sharedAbility.isActive) {
+                player.breakInvisibility(gameState);
+            }
+
+            if(player.sharedAbility.initiate(player, gameState)) {
+                io.to(player.id).emit('sharedAbility');
             }
         }
         
@@ -116,6 +130,7 @@ function gameLoop(gameState, deltaTime, io) {
         }
 
         if(player.isFiring) {
+            player.breakInvisibility(gameState);
             if(player.primaryWeapon.fire(player.x, player.y, player.angle, gameState, player.id)) {
                 io.to(player.id).emit('firedWeapon');
                 if(player.primaryWeapon.ammo === 0) {
@@ -127,45 +142,29 @@ function gameLoop(gameState, deltaTime, io) {
 
         if(player.primaryWeapon) player.primaryWeapon.update(deltaTime);
         if(player.secondaryWeapon) player.secondaryWeapon.update(deltaTime);
-        if(player.specialAbility) player.specialAbility.update(deltaTime, player);
+        if(player.specialAbility) player.specialAbility.update(deltaTime, player, gameState);
+        if(player.sharedAbility) player.sharedAbility.update(deltaTime, player, gameState);
         if(player.swapCooldownTimer > 0) player.swapCooldownTimer -= deltaTime;
     
         for (const bullet of gameState.bullets) {
             if (bullet.playerId === player.id) continue;
 
             const hitter = bullet.playerId;
-            const hitterPlayer = gameState.players.find(p => p.id === hitter);
  
             if (player.checkCircleCircleCollision(player.x, player.y, player.radius, bullet.x, bullet.y, bullet.radius)) {
-                player.takeDamage(bullet.damage);
+                player.takeDamage(bullet.damage, hitter);
                 bullet.destroy(gameState);
                 io.to(hitter).emit('hit');
                 io.to(player.id).emit('gotHit');
             
                 player.flashingTimer = 1;
             } else if (player.checkCircleCircleCollision(player.x, player.y, player.radius, bullet.x, bullet.y, bullet.radius)) {
-                player.takeDamage(bullet.damage);
+                player.takeDamage(bullet.damage, hitter);
                 bullet.destroy(gameState);
                 io.to(hitter).emit('hit');
                 io.to(player.id).emit('gotHit');
 
                 player.flashingTimer = 1;
-            }
-
-            if(player.HP <= 0) {
-                if(hitterPlayer) {
-                    hitterPlayer.kills++;
-                    io.to(hitter).emit('kill', {
-                        killedPlayer: player.name,
-                        killCount: hitterPlayer.kills
-                    });
-                }
-
-                if (gameState.gameMode === 'freeForAll') {
-                    player.randomSpawn(gameState);
-                } else {
-                    respawnAll(gameState);
-                }
             }
         }
 
@@ -174,15 +173,53 @@ function gameLoop(gameState, deltaTime, io) {
         if(player.flashingTimer > 0) {
             player.flashingTimer -= deltaTime;
         }
+
+        if (player.HP <= 0) {
+            const killerId = player.lastDamagedBy;
+            const killerPlayer = gameState.players.find(p => p.id === killerId);
+
+            if (killerPlayer && killerPlayer.id !== player.id) {
+                killerPlayer.kills++;
+                io.to(killerPlayer.id).emit('kill', {
+                    killedPlayer: player.name,
+                    killCount: killerPlayer.kills
+                });
+            }
+
+            if (gameState.gameMode === 'freeForAll') {
+                player.randomSpawn(gameState);
+                player.lastDamagedBy = null;
+            } else {
+                shouldRespawnAll = true;
+            }
+        }
+    }
+
+    if (shouldRespawnAll) {
+        respawnAll(gameState);
+        for (const player of gameState.players) {
+            player.lastDamagedBy = null;
+        }
     }
     
     for (const bullet of gameState.bullets) {
         bullet.update(deltaTime, gameState);
     }
+
+    for (const grenade of [...gameState.grenades]) {
+        grenade.update(deltaTime, gameState);
+    }
+
+    for (const obstacle of [...gameState.obstacles]) {
+        if (typeof obstacle.update === 'function') {
+            obstacle.update(deltaTime, gameState);
+        }
+    }
 }
 
 function respawnAll(gameState) {
     gameState.bullets = [];
+    gameState.grenades = [];
     gameState.obstacles = generateNewMap();
 
     for (const player of gameState.players) {

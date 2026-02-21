@@ -3,6 +3,7 @@ const ctx = canvas.getContext("2d");
 const menu = document.getElementById("menu");
 const characterMenu = document.getElementById("characterMenu");
 const searchingMenu = document.getElementById("searchingMenu");
+const controlsMenu = document.getElementById("controlsMenu");
 const gameScreen = document.getElementById("gameScreen");
 const healthBar = document.getElementById("healthBar");
 const healthFill = document.getElementById("healthFill");
@@ -11,6 +12,8 @@ const ammoDisplay = document.getElementById("ammoDisplay");
 const weaponName = document.getElementById("weaponName");
 const abilityOverlay = document.getElementById("abilityOverlay");
 const abilityText = document.getElementById("abilityText");
+const sharedAbilityOverlay = document.getElementById("sharedAbilityOverlay");
+const sharedAbilityText = document.getElementById("sharedAbilityText");
 const secondaryWeaponName = document.getElementById("secondaryWeaponName");
 
 const MAP_COLOR = "#8383b8";
@@ -19,23 +22,31 @@ const playerImages = {
     King: new Image(),
     Ninja: new Image(),
     Berserker: new Image(),
+    Grenade: new Image(),
 }
+const obstacleImages = {
+    shield: new Image(),
+};
 
 playerImages.King.src = 'sprites/king.png';
 playerImages.Ninja.src = 'sprites/ninja.png';
 playerImages.Berserker.src = 'sprites/berserker.png';
+playerImages.Grenade.src = 'sprites/grenade.png';
+obstacleImages.shield.src = 'sprites/shield.png';
 
 const socket = io();
 
 var gameState = {
     players: [],
     bullets: [],
+    grenades: [],
     obstacles: [],
 }
 
 var clientGameStateCache = {
     players: new Map(),
     bullets: new Map(),
+    grenades: new Map(),
     obstacles: new Map()
 };
 
@@ -44,14 +55,39 @@ var gameActive = false;
 var gameMode = '1v1'; // Track current game mode
 
 let playerSettings = loadCharacterSettings();
+const VALID_CHARACTERS = ['berserker', 'ninja', 'king'];
+const VALID_WEAPONS = ['m4', 'pistol', 'shotgun', 'sniper'];
+const VALID_SHARED_ABILITIES = ['grenade', 'invisibility', 'shield'];
+let loadoutDraft = sanitizePlayerSettings(playerSettings);
+playerSettings = { ...loadoutDraft };
+let lastAutoAdjustedSecondary = null;
+
+function sanitizePlayerSettings(settings) {
+    const characterType = VALID_CHARACTERS.includes(settings?.characterType) ? settings.characterType : 'berserker';
+    const weaponType = VALID_WEAPONS.includes(settings?.weaponType) ? settings.weaponType : 'm4';
+
+    let secondaryWeaponType = VALID_WEAPONS.includes(settings?.secondaryWeaponType)
+        ? settings.secondaryWeaponType
+        : getFallbackSecondary(weaponType);
+    const sharedAbilityType = VALID_SHARED_ABILITIES.includes(settings?.sharedAbilityType)
+        ? settings.sharedAbilityType
+        : 'grenade';
+
+    if (secondaryWeaponType === weaponType) {
+        secondaryWeaponType = getFallbackSecondary(weaponType);
+    }
+
+    return {
+        characterType,
+        weaponType,
+        secondaryWeaponType,
+        sharedAbilityType
+    };
+}
 
 function main() {
     canvas.width = 800;
     canvas.height = 600;
-
-    document.getElementById('characterSelect').value = playerSettings.characterType;
-    document.getElementById('weaponSelect').value = playerSettings.weaponType;
-    document.getElementById('secondaryWeaponSelect').value = playerSettings.secondaryWeaponType;
 
     socket.on('gameState', handleGameState);
     socket.on('gameStarting', () => {
@@ -80,6 +116,7 @@ function hideAllMenus() {
     menu.style.display = 'none';
     characterMenu.style.display = 'none';
     searchingMenu.style.display = 'none';
+    controlsMenu.style.display = 'none';
 }
 
 function showMainMenu() {
@@ -93,11 +130,15 @@ function showMainMenu() {
 function showCharacter() {
     hideAllMenus();
     characterMenu.style.display = 'block';
-    
-    // Apply saved settings to dropdowns when showing character menu
-    document.getElementById('characterSelect').value = playerSettings.characterType;
-    document.getElementById('weaponSelect').value = playerSettings.weaponType;
-    document.getElementById('secondaryWeaponSelect').value = playerSettings.secondaryWeaponType;
+    loadoutDraft = sanitizePlayerSettings(playerSettings);
+    enforceDistinctWeapons();
+    syncLoadoutSelectionUI();
+    showEquipmentTab('weapon');
+}
+
+function showControls() {
+    hideAllMenus();
+    controlsMenu.style.display = 'block';
 }
 
 function showSearching() {
@@ -105,17 +146,103 @@ function showSearching() {
     searchingMenu.style.display = 'block';
 }
 
+function getFallbackSecondary(primaryWeaponType) {
+    const fallbackOrder = ['pistol', 'm4', 'shotgun', 'sniper'];
+    return fallbackOrder.find((weapon) => weapon !== primaryWeaponType) || 'pistol';
+}
+
+function showEquipmentTab(tabName) {
+    const tabs = {
+        weapon: { tabId: 'tabWeapon', panelId: 'panelWeapon' },
+        secondary: { tabId: 'tabSecondary', panelId: 'panelSecondary' },
+        character: { tabId: 'tabCharacter', panelId: 'panelCharacter' },
+        sharedAbility: { tabId: 'tabSharedAbility', panelId: 'panelSharedAbility' }
+    };
+
+    Object.values(tabs).forEach((tabInfo) => {
+        const tab = document.getElementById(tabInfo.tabId);
+        const panel = document.getElementById(tabInfo.panelId);
+
+        if (tab) {
+            tab.classList.remove('active');
+        }
+
+        if (panel) {
+            panel.classList.remove('active');
+        }
+    });
+
+    const selectedTab = tabs[tabName];
+    if (!selectedTab) return;
+
+    document.getElementById(selectedTab.tabId)?.classList.add('active');
+    document.getElementById(selectedTab.panelId)?.classList.add('active');
+}
+
+function syncLoadoutSelectionUI() {
+    const optionButtons = document.querySelectorAll('.equip-option');
+    optionButtons.forEach((button) => {
+        const type = button.dataset.type;
+        const value = button.dataset.value;
+
+        const isActive =
+            (type === 'character' && value === loadoutDraft.characterType) ||
+            (type === 'weapon' && value === loadoutDraft.weaponType) ||
+            (type === 'secondary' && value === loadoutDraft.secondaryWeaponType) ||
+            (type === 'sharedAbility' && value === loadoutDraft.sharedAbilityType);
+
+        button.classList.toggle('active', isActive);
+    });
+}
+
+function enforceDistinctWeapons() {
+    if (loadoutDraft.weaponType === loadoutDraft.secondaryWeaponType) {
+        loadoutDraft.secondaryWeaponType = getFallbackSecondary(loadoutDraft.weaponType);
+        lastAutoAdjustedSecondary = loadoutDraft.secondaryWeaponType;
+        return true;
+    }
+
+    lastAutoAdjustedSecondary = null;
+    return false;
+}
+
+function selectEquip(type, value) {
+    if (type === 'character') {
+        loadoutDraft.characterType = value;
+    } else if (type === 'weapon') {
+        loadoutDraft.weaponType = value;
+    } else if (type === 'secondary') {
+        loadoutDraft.secondaryWeaponType = value;
+    } else if (type === 'sharedAbility') {
+        loadoutDraft.sharedAbilityType = value;
+    } else {
+        return;
+    }
+
+    const wasAdjusted = enforceDistinctWeapons();
+    syncLoadoutSelectionUI();
+
+    if (type === 'secondary' && wasAdjusted && lastAutoAdjustedSecondary) {
+        Toastify({
+            text: 'Primary and secondary weapons must be different.',
+            duration: 2200,
+            gravity: "top",
+            position: "right"
+        }).showToast();
+    }
+}
+
 function save() {
-    const characterType = document.getElementById('characterSelect').value;
-    const weaponType = document.getElementById('weaponSelect').value;
-    const secondaryWeaponType = document.getElementById('secondaryWeaponSelect').value;
+    enforceDistinctWeapons();
+    const { characterType, weaponType, secondaryWeaponType, sharedAbilityType } = loadoutDraft;
     
-    saveCharacterSettings(characterType, weaponType, secondaryWeaponType);
+    saveCharacterSettings(characterType, weaponType, secondaryWeaponType, sharedAbilityType);
     
     playerSettings = {
         characterType: characterType,
         weaponType: weaponType,
-        secondaryWeaponType: secondaryWeaponType
+        secondaryWeaponType: secondaryWeaponType,
+        sharedAbilityType: sharedAbilityType
     };
     
     showMainMenu();
@@ -141,9 +268,11 @@ function handleGameState(deltaData) {
 function resetClientCache() {
     gameState.players = [];
     gameState.bullets = [];
+    gameState.grenades = [];
     gameState.obstacles = [];
     clientGameStateCache.players.clear();
     clientGameStateCache.bullets.clear();
+    clientGameStateCache.grenades.clear();
     clientGameStateCache.obstacles.clear();
 }
 
@@ -153,11 +282,13 @@ function applyDeltaToGameState(delta) {
         // Full state update - replace everything
         gameState.players = delta.players || [];
         gameState.bullets = delta.bullets || [];
+        gameState.grenades = delta.grenades || [];
         gameState.obstacles = delta.obstacles || [];
         
         // Update cache
         clientGameStateCache.players.clear();
         clientGameStateCache.bullets.clear();
+        clientGameStateCache.grenades.clear();
         clientGameStateCache.obstacles.clear();
         
         for (const player of gameState.players) {
@@ -165,6 +296,9 @@ function applyDeltaToGameState(delta) {
         }
         for (const bullet of gameState.bullets) {
             clientGameStateCache.bullets.set(bullet.id, bullet);
+        }
+        for (const grenade of gameState.grenades) {
+            clientGameStateCache.grenades.set(grenade.id, grenade);
         }
         for (const obstacle of gameState.obstacles) {
             clientGameStateCache.obstacles.set(obstacle.id, obstacle);
@@ -204,6 +338,19 @@ function applyDeltaToGameState(delta) {
             clientGameStateCache.bullets.set(bulletUpdate.id, bulletUpdate);
         }
     }
+
+    // Handle grenade updates
+    if (delta.grenades) {
+        for (const grenadeUpdate of delta.grenades) {
+            const existingIndex = gameState.grenades.findIndex(g => g.id === grenadeUpdate.id);
+            if (existingIndex >= 0) {
+                gameState.grenades[existingIndex] = { ...gameState.grenades[existingIndex], ...grenadeUpdate };
+            } else {
+                gameState.grenades.push(grenadeUpdate);
+            }
+            clientGameStateCache.grenades.set(grenadeUpdate.id, grenadeUpdate);
+        }
+    }
     
     // Handle removed bullets
     if (delta.removedBullets) {
@@ -212,12 +359,29 @@ function applyDeltaToGameState(delta) {
             clientGameStateCache.bullets.delete(bulletId);
         }
     }
+
+    // Handle removed grenades
+    if (delta.removedGrenades) {
+        for (const grenadeId of delta.removedGrenades) {
+            gameState.grenades = gameState.grenades.filter(g => g.id !== grenadeId);
+            clientGameStateCache.grenades.delete(grenadeId);
+        }
+    }
     
     // Handle obstacle updates
     if (delta.obstacles) {
         for (const obstacleUpdate of delta.obstacles) {
             const existingIndex = gameState.obstacles.findIndex(o => o.id === obstacleUpdate.id);
             if (existingIndex >= 0) {
+                const previousObstacle = gameState.obstacles[existingIndex];
+                if (
+                    previousObstacle?.image === 'shield.png' &&
+                    typeof previousObstacle.health === 'number' &&
+                    typeof obstacleUpdate.health === 'number' &&
+                    obstacleUpdate.health < previousObstacle.health
+                ) {
+                    soundManager.play('gotHit', 0.15);
+                }
                 gameState.obstacles[existingIndex] = { ...gameState.obstacles[existingIndex], ...obstacleUpdate };
             } else {
                 gameState.obstacles.push(obstacleUpdate);
@@ -261,6 +425,10 @@ function draw(gameState) {
     if(thisPlayer.primaryWeapon.name) {
         weaponName.textContent = thisPlayer.primaryWeapon.name;
     }
+
+    if (thisPlayer.secondaryWeapon?.name) {
+        secondaryWeaponName.textContent = `Secondary: ${thisPlayer.secondaryWeapon.name}`;
+    }
     
     // update ability UI
     if (thisPlayer.specialAbility) {
@@ -273,6 +441,17 @@ function draw(gameState) {
             abilityOverlay.style.height = `${cooldownPercent}%`;
         } else {
             abilityOverlay.style.height = '0%';
+        }
+    }
+
+    if (thisPlayer.sharedAbility) {
+        sharedAbilityText.textContent = thisPlayer.sharedAbility.name;
+
+        if (thisPlayer.sharedAbility.currentCooldown > 0) {
+            const cooldownPercent = (thisPlayer.sharedAbility.currentCooldown / thisPlayer.sharedAbility.cooldown) * 100;
+            sharedAbilityOverlay.style.height = `${cooldownPercent}%`;
+        } else {
+            sharedAbilityOverlay.style.height = '0%';
         }
     }
     
@@ -297,23 +476,73 @@ function draw(gameState) {
     for (const bullet of gameState.bullets) {
         drawBullet(bullet);
     }
+
+    for (const grenade of gameState.grenades) {
+        drawGrenade(grenade);
+    }
     
     for (const player of gameState.players) {
-        drawPlayer(player);
+        drawPlayer(player, thisPlayer);
     }
     
    ctx.restore();
 }
 
 function drawObstacle(obstacle) {
+    if (obstacle.image === 'shield.png') {
+        ctx.save();
+        ctx.translate(obstacle.x, obstacle.y);
+        ctx.rotate(obstacle.angle || 0);
+        if (obstacleImages.shield.complete) {
+            ctx.drawImage(obstacleImages.shield, -obstacle.w / 2, -obstacle.h / 2, obstacle.w, obstacle.h);
+        } else {
+            ctx.fillStyle = obstacle.color || 'rgba(50, 180, 255, 0.25)';
+            ctx.fillRect(-obstacle.w / 2, -obstacle.h / 2, obstacle.w, obstacle.h);
+        }
+        ctx.restore();
+        return;
+    }
+
     ctx.fillStyle = obstacle.color;
     ctx.fillRect(obstacle.x, obstacle.y, obstacle.w, obstacle.h);
 }
 
-function drawPlayer(player) {
+function getDistanceBetweenPlayers(playerA, playerB) {
+    const dx = playerA.x - playerB.x;
+    const dy = playerA.y - playerB.y;
+    return Math.sqrt(dx * dx + dy * dy);
+}
+
+function getPlayerOpacity(player, thisPlayer) {
+    const MIN_VISIBLE_ALPHA = 0.35;
+    const TRANSPARENT_ALPHA = 0.2;
+    const REVEAL_DISTANCE = 220;
+
+    if (!player.invisible) {
+        return 1;
+    }
+
+    if (player.id === thisPlayer.id) {
+        return MIN_VISIBLE_ALPHA;
+    }
+
+    if (getDistanceBetweenPlayers(player, thisPlayer) <= REVEAL_DISTANCE) {
+        return TRANSPARENT_ALPHA;
+    }
+
+    return 0;
+}
+
+function drawPlayer(player, thisPlayer) {
+    const computedOpacity = getPlayerOpacity(player, thisPlayer);
+    if (computedOpacity <= 0) {
+        return;
+    }
+
     ctx.save();
     ctx.translate(player.x, player.y);
     ctx.rotate(player.angle);
+    ctx.globalAlpha *= computedOpacity;
     
     // draw glow effects for special abilities
     if (player.enlarged) {
@@ -368,6 +597,27 @@ function drawBullet(bullet) {
     ctx.stroke(); 
 }
 
+function drawGrenade(grenade) {
+    const GRENADE_SIZE = 48;
+
+    ctx.save();
+    ctx.translate(grenade.x, grenade.y);
+    ctx.rotate(grenade.spin || 0);
+
+    if (playerImages.Grenade.complete) {
+        ctx.drawImage(playerImages.Grenade, -GRENADE_SIZE / 2, -GRENADE_SIZE / 2, GRENADE_SIZE, GRENADE_SIZE);
+    } else {
+        ctx.beginPath();
+        ctx.arc(0, 0, grenade.radius || 20, 0, 2 * Math.PI);
+        ctx.fillStyle = '#75ff8f';
+        ctx.fill();
+        ctx.strokeStyle = '#2c8f44';
+        ctx.stroke();
+    }
+
+    ctx.restore();
+}
+
 function startGame() {
     gameMode = '1v1';
     showSearching();
@@ -375,6 +625,7 @@ function startGame() {
         characterType: playerSettings.characterType,
         weaponType: playerSettings.weaponType,
         secondaryWeaponType: playerSettings.secondaryWeaponType,
+        sharedAbilityType: playerSettings.sharedAbilityType,
     });
     main();
 }
@@ -386,6 +637,7 @@ function startFreeForAll() {
         characterType: playerSettings.characterType,
         weaponType: playerSettings.weaponType,
         secondaryWeaponType: playerSettings.secondaryWeaponType,
+        sharedAbilityType: playerSettings.sharedAbilityType,
     });
     main();
 }
@@ -456,7 +708,7 @@ function handleKill(data) {
 }
 
 function handleSwapWeapons(weaponName) {
-    secondaryWeaponName.textContent = weaponName;
+    secondaryWeaponName.textContent = `Secondary: ${weaponName}`;
 }
 
 function handleReload() {

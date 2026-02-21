@@ -21,14 +21,24 @@ class Obstacle {
 class Shield extends Obstacle {
     constructor(options = {}) {
         super(options);
-        this.health = 100;
+        this.health = options.health ?? 120;
         this.image = "shield.png";
         this.angle = options.angle || 0;
+        this.ownerId = options.ownerId || null;
+        this.duration = options.duration ?? 750;
+        this.age = 0;
     }
 
     takeDamage(damage, gameState) {
         this.health -= damage;
         if(this.health <= 0) {
+            this.destroy(gameState);
+        }
+    }
+
+    update(deltaTime, gameState) {
+        this.age += deltaTime;
+        if (this.age >= this.duration) {
             this.destroy(gameState);
         }
     }
