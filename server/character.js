@@ -83,11 +83,17 @@ class Character {
         const effectiveSpeed = this.getMoveSpeed();
         const newX = this.x + dx * effectiveSpeed;
         const newY = this.y + dy * effectiveSpeed;
+        const collidableObstacles = obstacles.filter((obstacle) => {
+            if (obstacle?.kind === 'autoTurret' && obstacle?.ownerId === this.id) {
+                return false;
+            }
+            return true;
+        });
         
         let canMoveX = true;
         let canMoveY = true;
         
-        for (const obstacle of obstacles) {
+        for (const obstacle of collidableObstacles) {
             if (circleObstacleCollision(newX, this.y, this.radius, obstacle)) {
                 canMoveX = false;
             }
@@ -105,7 +111,7 @@ class Character {
         }
 
         // If already intersecting (e.g. spawned inside a shield), push out.
-        const resolved = resolveCircleObstacleOverlaps(this.x, this.y, this.radius, obstacles);
+        const resolved = resolveCircleObstacleOverlaps(this.x, this.y, this.radius, collidableObstacles);
         this.x = resolved.x;
         this.y = resolved.y;
     }

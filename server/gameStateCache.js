@@ -83,7 +83,12 @@ class GameStateCache {
                     name: player.sharedAbility.name,
                     currentCooldown: Math.round(player.sharedAbility.currentCooldown * 100) / 100,
                     cooldown: player.sharedAbility.cooldown,
-                    isActive: player.sharedAbility.isActive || false
+                    isActive: player.sharedAbility.isActive || false,
+                    currentDuration: Math.round((player.sharedAbility.currentDuration || 0) * 100) / 100,
+                    duration: player.sharedAbility.duration || 0,
+                    effectX: Math.round((player.sharedAbility.effectX || 0) * 100) / 100,
+                    effectY: Math.round((player.sharedAbility.effectY || 0) * 100) / 100,
+                    effectRadius: player.sharedAbility.effectRadius || 0
                 } : null,
                 passiveAbility: player.passiveAbility ? {
                     name: player.passiveAbility.name,
@@ -128,7 +133,9 @@ class GameStateCache {
                 color: obstacle.color,
                 health: obstacle.health,
                 image: obstacle.image,
-                angle: obstacle.angle
+                angle: obstacle.angle,
+                kind: obstacle.kind,
+                headImage: obstacle.headImage
             })),
             gameMode: gameState.gameMode || '1v1',
             frameNumber: ++this.frameNumber
@@ -257,7 +264,13 @@ class GameStateCache {
                (current.specialAbility && !previous.specialAbility) ||
                (!current.specialAbility && previous.specialAbility) ||
                (current.sharedAbility && previous.sharedAbility && 
-                current.sharedAbility.currentCooldown !== previous.sharedAbility.currentCooldown) ||
+                (current.sharedAbility.currentCooldown !== previous.sharedAbility.currentCooldown ||
+                 current.sharedAbility.isActive !== previous.sharedAbility.isActive ||
+                 current.sharedAbility.currentDuration !== previous.sharedAbility.currentDuration ||
+                 current.sharedAbility.duration !== previous.sharedAbility.duration ||
+                 current.sharedAbility.effectX !== previous.sharedAbility.effectX ||
+                 current.sharedAbility.effectY !== previous.sharedAbility.effectY ||
+                 current.sharedAbility.effectRadius !== previous.sharedAbility.effectRadius)) ||
                (current.sharedAbility && !previous.sharedAbility) ||
                (!current.sharedAbility && previous.sharedAbility) ||
                (current.passiveAbility && previous.passiveAbility &&
@@ -296,7 +309,9 @@ class GameStateCache {
                current.angle !== previous.angle ||
                current.color !== previous.color ||
                current.health !== previous.health ||
-               current.image !== previous.image;
+               current.image !== previous.image ||
+               current.kind !== previous.kind ||
+               current.headImage !== previous.headImage;
     }
 
     updateAndGetDelta(gameState) {

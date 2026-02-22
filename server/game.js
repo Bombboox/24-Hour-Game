@@ -282,11 +282,37 @@ function gameLoop(gameState, deltaTime, io) {
         if(player.swapCooldownTimer > 0) player.swapCooldownTimer -= deltaTime;
     
         for (const bullet of gameState.bullets) {
+            if (!bullet?.active) continue;
             if (bullet.playerId === player.id) continue;
 
             const hitter = bullet.playerId;
+
+            if (bullet.kind !== 'bubble') {
+                let blockedByBubble = false;
+                for (const blocker of gameState.bullets) {
+                    if (!blocker?.active || blocker === bullet || blocker.kind !== 'bubble') continue;
+                    if (blocker.playerId === bullet.playerId) continue;
+                    if (player.checkCircleCircleCollision(bullet.x, bullet.y, bullet.radius, blocker.x, blocker.y, blocker.radius)) {
+                        bullet.destroy(gameState);
+                        blockedByBubble = true;
+                        break;
+                    }
+                }
+                if (blockedByBubble) {
+                    continue;
+                }
+            }
  
             if (player.checkCircleCircleCollision(player.x, player.y, player.radius, bullet.x, bullet.y, bullet.radius)) {
+                if (bullet.kind === 'rocket' && typeof bullet.explode === 'function') {
+                    bullet.explode(gameState, io);
+                    if (hitter) {
+                        io.to(hitter).emit('hit');
+                    }
+                    io.to(player.id).emit('gotHit');
+                    continue;
+                }
+
                 const hpBeforeDamage = player.HP;
                 player.takeDamage(bullet.damage, hitter);
                 const damageDealt = Math.max(0, hpBeforeDamage - player.HP);
@@ -317,38 +343,6 @@ function gameLoop(gameState, deltaTime, io) {
                     }
                 }
             
-                player.flashingTimer = 1;
-            } else if (player.checkCircleCircleCollision(player.x, player.y, player.radius, bullet.x, bullet.y, bullet.radius)) {
-                const hpBeforeDamage = player.HP;
-                player.takeDamage(bullet.damage, hitter);
-                const damageDealt = Math.max(0, hpBeforeDamage - player.HP);
-                if (bullet.stunDuration > 0) {
-                    player.stunnedTimer = Math.max(player.stunnedTimer || 0, bullet.stunDuration);
-                }
-                bullet.destroy(gameState);
-                io.to(hitter).emit('hit');
-                io.to(player.id).emit('gotHit');
-                if (damageDealt > 0 && hitter) {
-                    io.to(hitter).emit('combatText', {
-                        type: 'damage',
-                        amount: damageDealt,
-                        x: player.x,
-                        y: player.y - player.radius - 10
-                    });
-                }
-                const damageDealer = gameState.players.find((p) => p.id === hitter);
-                if (damageDealer?.passiveAbility) {
-                    const healedAmount = damageDealer.passiveAbility.onDamageDealt(damageDealer, damageDealt, player, gameState) || 0;
-                    if (healedAmount > 0) {
-                        io.to(hitter).emit('combatText', {
-                            type: 'healing',
-                            amount: healedAmount,
-                            x: damageDealer.x,
-                            y: damageDealer.y - damageDealer.radius - 10
-                        });
-                    }
-                }
-
                 player.flashingTimer = 1;
             }
 
@@ -426,7 +420,7 @@ function gameLoop(gameState, deltaTime, io) {
     }
     
     for (const bullet of gameState.bullets) {
-        bullet.update(deltaTime, gameState);
+        bullet.update(deltaTime, gameState, io);
     }
 
     for (const grenade of [...gameState.grenades]) {

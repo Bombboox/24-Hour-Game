@@ -16,9 +16,11 @@ class Bullet {
         this.age = 0; 
         this.stunDuration = options.stunDuration || 0;
         this.kind = options.kind || 'bullet';
+        this.explosionRadius = options.explosionRadius || 0;
+        this.explosionDamage = options.explosionDamage || this.damage;
     }
     
-    update(deltaTime, gameState) {
+    update(deltaTime, gameState, io = null) {
         if (!this.active) return;
         this.age += deltaTime;
         
@@ -29,6 +31,21 @@ class Bullet {
         }
 
         const obstacles = gameState.obstacles;
+
+        if (this.kind !== 'bubble') {
+            for (const other of gameState.bullets || []) {
+                if (!other || other === this || !other.active || other.kind !== 'bubble') continue;
+                if (other.playerId === this.playerId) continue;
+
+                const dxToBubble = this.x - other.x;
+                const dyToBubble = this.y - other.y;
+                const radii = this.radius + other.radius;
+                if ((dxToBubble * dxToBubble + dyToBubble * dyToBubble) <= (radii * radii)) {
+                    this.destroy(gameState);
+                    return;
+                }
+            }
+        }
         
         const dx = Math.cos(this.angle) * this.speed * deltaTime;
         const dy = Math.sin(this.angle) * this.speed * deltaTime;
@@ -42,16 +59,24 @@ class Bullet {
             }
             if (hasRotation(obstacle)) {
                 if (circleRotatedRectCollision(this.x, this.y, this.radius, obstacle)) {
-                    this.active = false;
-                    this.destroy(gameState);
+                    if (this.kind === 'rocket') {
+                        this.explode(gameState, io);
+                    } else {
+                        this.active = false;
+                        this.destroy(gameState);
+                    }
                     if(obstacle.health) {
                         obstacle.takeDamage(this.damage, gameState);
                     }
                     break;
                 }
             } else if (circleRectCollision(this.x, this.y, this.radius, obstacle)) {
-                this.active = false;
-                this.destroy(gameState);
+                if (this.kind === 'rocket') {
+                    this.explode(gameState, io);
+                } else {
+                    this.active = false;
+                    this.destroy(gameState);
+                }
                 if(obstacle.health) {
                     obstacle.takeDamage(this.damage, gameState);
                 }
@@ -73,7 +98,57 @@ class Bullet {
 
     destroy(gameState) {
         this.active = false;
-        gameState.bullets.splice(gameState.bullets.indexOf(this), 1);
+        const index = gameState.bullets.indexOf(this);
+        if (index > -1) {
+            gameState.bullets.splice(index, 1);
+        }
+    }
+
+    explode(gameState, io = null) {
+        if (!this.active || this.kind !== 'rocket') {
+            return;
+        }
+        this.active = false;
+        const owner = gameState.players.find((player) => player.id === this.playerId);
+
+        for (const player of gameState.players || []) {
+            if (!player || player.id === this.playerId) continue;
+
+            const dx = player.x - this.x;
+            const dy = player.y - this.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance > this.explosionRadius) continue;
+
+            const falloff = Math.max(0.3, 1 - (distance / this.explosionRadius));
+            const damage = this.explosionDamage * falloff;
+            const hpBeforeDamage = player.HP;
+            player.takeDamage(damage, this.playerId);
+            const damageDealt = Math.max(0, hpBeforeDamage - player.HP);
+            player.flashingTimer = 1;
+
+            if (damageDealt > 0 && io && this.playerId) {
+                io.to(this.playerId).emit('combatText', {
+                    type: 'damage',
+                    amount: damageDealt,
+                    x: player.x,
+                    y: player.y - player.radius - 10
+                });
+            }
+
+            if (owner?.passiveAbility) {
+                const healedAmount = owner.passiveAbility.onDamageDealt(owner, damageDealt, player, gameState) || 0;
+                if (healedAmount > 0 && io && this.playerId) {
+                    io.to(this.playerId).emit('combatText', {
+                        type: 'healing',
+                        amount: healedAmount,
+                        x: owner.x,
+                        y: owner.y - owner.radius - 10
+                    });
+                }
+            }
+        }
+
+        this.destroy(gameState);
     }
 }
 

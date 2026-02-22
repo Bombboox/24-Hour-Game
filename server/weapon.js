@@ -87,7 +87,7 @@ class Weapon {
 class Shotgun extends Weapon {
     constructor(options = {}) {
         super({
-            damage: options.damage || 16,
+            damage: options.damage || 8,
             bulletSpeed: options.bulletSpeed || 25,
             fireCooldown: options.fireCooldown || 24,
             spread: options.spread || Math.PI / 5, 
@@ -152,7 +152,7 @@ class Shotgun extends Weapon {
 class M4 extends Weapon {
     constructor(options = {}) {
         super({
-            damage: options.damage || 6.5,
+            damage: options.damage || 8,
             bulletSpeed: options.bulletSpeed || 20,
             fireCooldown: options.fireCooldown || 3,
             spread: options.spread || Math.PI / 24, 
@@ -319,6 +319,7 @@ class LaserGun extends Weapon {
         let endX = x + dx * this.range;
         let endY = y + dy * this.range;
         let hitPlayer = null;
+        let hitObstacle = null;
 
         for (let dist = 0; dist <= this.range; dist += stepSize) {
             const px = x + dx * dist;
@@ -334,7 +335,19 @@ class LaserGun extends Weapon {
                 if (hitObstacle) {
                     endX = x + dx * Math.max(0, dist - stepSize);
                     endY = y + dy * Math.max(0, dist - stepSize);
-                    return { endX, endY, hitPlayer: null };
+                    return { endX, endY, hitPlayer: null, hitObstacle: obstacle };
+                }
+            }
+
+            for (const bullet of gameState.bullets || []) {
+                if (!bullet || !bullet.active || bullet.kind !== 'bubble') continue;
+                const bdx = bullet.x - px;
+                const bdy = bullet.y - py;
+                const radii = bullet.radius + rayRadius;
+                if ((bdx * bdx + bdy * bdy) <= (radii * radii)) {
+                    endX = x + dx * Math.max(0, dist - stepSize);
+                    endY = y + dy * Math.max(0, dist - stepSize);
+                    return { endX, endY, hitPlayer: null, hitObstacle: bullet };
                 }
             }
 
@@ -346,12 +359,12 @@ class LaserGun extends Weapon {
                     endX = px;
                     endY = py;
                     hitPlayer = player;
-                    return { endX, endY, hitPlayer };
+                    return { endX, endY, hitPlayer, hitObstacle: null };
                 }
             }
         }
 
-        return { endX, endY, hitPlayer: null };
+        return { endX, endY, hitPlayer: null, hitObstacle };
     }
 
     fire(x, y, targetAngle, gameState, playerId, io = null, owner = null) {
@@ -365,7 +378,7 @@ class LaserGun extends Weapon {
             this.reload();
         }
 
-        const { endX, endY, hitPlayer } = this.raycast(x, y, this.angle, gameState, playerId);
+        const { endX, endY, hitPlayer, hitObstacle } = this.raycast(x, y, this.angle, gameState, playerId);
 
         if (owner) {
             owner.laserBeam = {
@@ -413,6 +426,59 @@ class LaserGun extends Weapon {
             }
         }
 
+        if (hitObstacle?.health) {
+            hitObstacle.takeDamage(this.currentDamage, gameState);
+        }
+
+        return true;
+    }
+}
+
+class RocketLauncher extends Weapon {
+    constructor(options = {}) {
+        super({
+            damage: options.damage || 48,
+            bulletSpeed: options.bulletSpeed || 14,
+            fireCooldown: options.fireCooldown || 34,
+            spread: options.spread || Math.PI / 120,
+            offsetDistance: options.offsetDistance || 24,
+            ammo: options.ammo || 3,
+            maxAmmo: options.maxAmmo || 3,
+            reloadTime: options.reloadTime || 42,
+            name: 'Rocket Launcher',
+            ...options
+        });
+        this.aoeRadius = options.aoeRadius || 170;
+    }
+
+    fire(x, y, targetAngle, gameState, playerId) {
+        if (!this.canFire()) return false;
+
+        this.currentCooldown = this.fireCooldown;
+        this.angle = targetAngle;
+        this.ammo--;
+
+        if (this.ammo === 0) {
+            this.reload();
+        }
+
+        const lifetime = 90;
+        const rocket = new Bullet({
+            x,
+            y,
+            speed: this.bulletSpeed,
+            angle: this.angle + (Math.random() - 0.5) * this.spread,
+            damage: this.damage,
+            radius: 12,
+            color: '#f8a432',
+            playerId,
+            lifetime,
+            kind: 'rocket',
+            explosionRadius: this.aoeRadius,
+            explosionDamage: this.damage
+        });
+
+        gameState.bullets.push(rocket);
         return true;
     }
 }
@@ -427,7 +493,7 @@ class Taser extends Weapon {
             offsetDistance: options.offsetDistance || 20,
             ammo: options.ammo || 1,
             maxAmmo: options.maxAmmo || 1,
-            reloadTime: options.reloadTime || 42,
+            reloadTime: options.reloadTime || 105,
             name: 'Taser',
             ...options
         });
@@ -465,6 +531,52 @@ class Taser extends Weapon {
     }
 }
 
+class BubbleLauncher extends Weapon {
+    constructor(options = {}) {
+        super({
+            damage: options.damage || 50,
+            bulletSpeed: options.bulletSpeed || 6,
+            fireCooldown: options.fireCooldown || 40,
+            spread: options.spread || Math.PI / 100,
+            offsetDistance: options.offsetDistance || 24,
+            ammo: options.ammo || 2,
+            maxAmmo: options.maxAmmo || 2,
+            reloadTime: options.reloadTime || 78,
+            name: 'Bubble Launcher',
+            ...options
+        });
+        this.projectileLifetime = options.projectileLifetime || 120;
+    }
+
+    fire(x, y, targetAngle, gameState, playerId) {
+        if (!this.canFire()) return false;
+
+        this.currentCooldown = this.fireCooldown;
+        this.angle = targetAngle;
+        this.ammo--;
+
+        if (this.ammo === 0) {
+            this.reload();
+        }
+
+        const bubble = new Bullet({
+            x,
+            y,
+            speed: this.bulletSpeed,
+            angle: this.angle + (Math.random() - 0.5) * this.spread,
+            damage: this.damage,
+            radius: 22,
+            color: 'rgba(90, 195, 255, 0.62)',
+            playerId,
+            lifetime: this.projectileLifetime,
+            kind: 'bubble'
+        });
+        gameState.bullets.push(bubble);
+
+        return true;
+    }
+}
+
 module.exports = {
     Weapon,
     Shotgun,
@@ -472,5 +584,7 @@ module.exports = {
     Sniper,
     Pistol,
     LaserGun,
-    Taser
+    Taser,
+    RocketLauncher,
+    BubbleLauncher
 }

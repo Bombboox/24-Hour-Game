@@ -1,9 +1,12 @@
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
+const menuBackdropCanvas = document.getElementById("menuBackdrop");
+const menuBackdropCtx = menuBackdropCanvas ? menuBackdropCanvas.getContext("2d") : null;
 const menu = document.getElementById("menu");
 const characterMenu = document.getElementById("characterMenu");
 const searchingMenu = document.getElementById("searchingMenu");
 const controlsMenu = document.getElementById("controlsMenu");
+const menuLink = document.querySelector(".menu-link");
 const gameScreen = document.getElementById("gameScreen");
 const healthBar = document.getElementById("healthBar");
 const healthFill = document.getElementById("healthFill");
@@ -28,8 +31,17 @@ const matchEndCard = document.getElementById("matchEndCard");
 const matchEndTitle = document.getElementById("matchEndTitle");
 const matchEndScore = document.getElementById("matchEndScore");
 const secondaryWeaponName = document.getElementById("secondaryWeaponName");
+const patchNotesList = document.getElementById("patchNotesList");
+const patchNotesVersion = document.getElementById("patchNotesVersion");
 
 const MAP_COLOR = "#d3d3d3";
+const GRID_MINOR_SIZE = 35;
+const GRID_MAJOR_EVERY = 5;
+const GRID_MINOR_COLOR = "rgba(255, 255, 255, 0.23)";
+const GRID_MAJOR_COLOR = "rgba(255, 255, 255, 0.21)";
+const MENU_BACKDROP_SPRITES = ["King", "Ninja", "Berserker", "Demoman", "Reaver"];
+const MENU_BACKDROP_ACTOR_COUNT = 8;
+const MENU_BACKDROP_FPS = 24;
 
 const playerImages = {
     King: new Image(),
@@ -40,6 +52,9 @@ const playerImages = {
     Grenade: new Image(),
     Explosive: new Image(),
     ReaverShard: new Image(),
+    Missile: new Image(),
+    TurretBase: new Image(),
+    TurretHead: new Image(),
 }
 const obstacleImages = {
     shield: new Image(),
@@ -53,6 +68,9 @@ playerImages.Reaver.src = 'sprites/reaver.png';
 playerImages.Grenade.src = 'sprites/grenade.png';
 playerImages.Explosive.src = 'sprites/explosive.png';
 playerImages.ReaverShard.src = 'sprites/reaver_shard.png';
+playerImages.Missile.src = 'sprites/missle.png';
+playerImages.TurretBase.src = 'sprites/turret_base.png';
+playerImages.TurretHead.src = 'sprites/turret_head.png';
 obstacleImages.shield.src = 'sprites/shield.png';
 
 const socket = io();
@@ -83,14 +101,22 @@ const SCORE_POPUP_VISIBLE_MS = 2600;
 const SCORE_POPUP_FADE_MS = 900;
 let scorePopupShownAt = 0;
 let lastScoreSignature = '';
+let menuBackdropInitialized = false;
+let menuBackdropActors = [];
+let menuBackdropAnimationId = null;
+let menuBackdropLastTime = 0;
+let menuBackdropLastDrawTime = 0;
 
 let playerSettings = loadCharacterSettings();
 const VALID_CHARACTERS = ['berserker', 'ninja', 'king', 'demoman', 'reaver'];
-const VALID_WEAPONS = ['m4', 'pistol', 'shotgun', 'sniper', 'laser', 'taser'];
-const VALID_SHARED_ABILITIES = ['grenade', 'invisibility', 'shield'];
+const VALID_WEAPONS = ['m4', 'pistol', 'shotgun', 'sniper', 'laser', 'taser', 'rocket', 'bubble'];
+const VALID_SHARED_ABILITIES = ['grenade', 'invisibility', 'shield', 'turret', 'healingcircle'];
 let loadoutDraft = sanitizePlayerSettings(playerSettings);
 playerSettings = { ...loadoutDraft };
 let lastAutoAdjustedSecondary = null;
+
+renderPatchNotes();
+initializeMenuBackdrop();
 
 function sanitizePlayerSettings(settings) {
     const characterType = VALID_CHARACTERS.includes(settings?.characterType) ? settings.characterType : 'berserker';
@@ -137,6 +163,9 @@ function main() {
     socket.on('hit', handleHit);
     socket.on('gotHit', handleGotHit);
     socket.on('firedWeapon', handleFiredWeapon);
+    socket.on('specialAbility', handleSpecialAbility);
+    socket.on('kingAuraPulse', handleKingAuraPulse);
+    socket.on('reaverZap', handleReaverZap);
     socket.on('swapWeapons', handleSwapWeapons);
     socket.on('combatText', handleCombatText);
     socket.on('matchEnded', handleMatchEnded);
@@ -154,12 +183,18 @@ function hideAllMenus() {
     characterMenu.style.display = 'none';
     searchingMenu.style.display = 'none';
     controlsMenu.style.display = 'none';
+    if (menuLink) {
+        menuLink.style.display = 'none';
+    }
 }
 
 function showMainMenu() {
     hideAllMenus();
     gameScreen.style.display = 'none';
     menu.style.display = 'block';
+    if (menuLink) {
+        menuLink.style.display = 'flex';
+    }
     gameActive = false;
     gameMode = '1v1';
     soundManager.stop('laser');
@@ -191,7 +226,7 @@ function showSearching() {
 }
 
 function getFallbackSecondary(primaryWeaponType) {
-    const fallbackOrder = ['pistol', 'm4', 'shotgun', 'sniper', 'laser', 'taser'];
+    const fallbackOrder = ['pistol', 'm4', 'shotgun', 'sniper', 'laser', 'taser', 'rocket', 'bubble'];
     return fallbackOrder.find((weapon) => weapon !== primaryWeaponType) || 'pistol';
 }
 
@@ -248,6 +283,146 @@ function enforceDistinctWeapons() {
 
     lastAutoAdjustedSecondary = null;
     return false;
+}
+
+function renderPatchNotes() {
+    if (!patchNotesList) return;
+
+    const source = window.PATCH_NOTES || {};
+    const entries = Array.isArray(source)
+        ? source
+        : (Array.isArray(source.entries) ? source.entries : []);
+    const version = typeof source.version === 'string' ? source.version.trim() : '';
+
+    patchNotesList.innerHTML = '';
+
+    const safeEntries = entries
+        .map((entry) => `${entry ?? ''}`.trim())
+        .filter(Boolean);
+
+    if (safeEntries.length === 0) {
+        const item = document.createElement('li');
+        item.textContent = 'Add notes in client/patchNotes.js';
+        patchNotesList.appendChild(item);
+    } else {
+        for (const entry of safeEntries) {
+            const item = document.createElement('li');
+            item.textContent = entry;
+            patchNotesList.appendChild(item);
+        }
+    }
+
+    if (patchNotesVersion) {
+        patchNotesVersion.textContent = version;
+    }
+}
+
+function initializeMenuBackdrop() {
+    if (!menuBackdropCtx || menuBackdropInitialized) return;
+    menuBackdropInitialized = true;
+    resizeMenuBackdropCanvas();
+    spawnMenuBackdropActors();
+    window.addEventListener('resize', resizeMenuBackdropCanvas);
+    menuBackdropAnimationId = requestAnimationFrame(animateMenuBackdrop);
+}
+
+function resizeMenuBackdropCanvas() {
+    if (!menuBackdropCanvas) return;
+    menuBackdropCanvas.width = window.innerWidth;
+    menuBackdropCanvas.height = window.innerHeight;
+}
+
+function spawnMenuBackdropActors() {
+    if (!menuBackdropCanvas) return;
+
+    const width = menuBackdropCanvas.width || window.innerWidth;
+    const height = menuBackdropCanvas.height || window.innerHeight;
+    menuBackdropActors = [];
+
+    const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const actorCount = reducedMotion ? 4 : MENU_BACKDROP_ACTOR_COUNT;
+
+    for (let i = 0; i < actorCount; i++) {
+        const spriteName = MENU_BACKDROP_SPRITES[Math.floor(Math.random() * MENU_BACKDROP_SPRITES.length)];
+        const speed = 22 + Math.random() * 34;
+        const direction = Math.random() * Math.PI * 2;
+        const size = 48 + Math.random() * 28;
+
+        menuBackdropActors.push({
+            spriteName,
+            x: Math.random() * width,
+            y: Math.random() * height,
+            vx: Math.cos(direction) * speed,
+            vy: Math.sin(direction) * speed,
+            size,
+            bobOffset: Math.random() * Math.PI * 2
+        });
+    }
+}
+
+function animateMenuBackdrop(timestamp) {
+    menuBackdropAnimationId = requestAnimationFrame(animateMenuBackdrop);
+    if (!menuBackdropCtx || !menuBackdropCanvas) return;
+
+    const frameInterval = 1000 / MENU_BACKDROP_FPS;
+    if (menuBackdropLastDrawTime && (timestamp - menuBackdropLastDrawTime) < frameInterval) {
+        return;
+    }
+    menuBackdropLastDrawTime = timestamp;
+
+    const deltaSeconds = Math.min(
+        0.04,
+        menuBackdropLastTime ? (timestamp - menuBackdropLastTime) / 1000 : 0.016
+    );
+    menuBackdropLastTime = timestamp;
+
+    const width = menuBackdropCanvas.width;
+    const height = menuBackdropCanvas.height;
+    menuBackdropCtx.clearRect(0, 0, width, height);
+
+    if (gameActive) {
+        return;
+    }
+
+    const margin = 76;
+    const time = timestamp * 0.001;
+
+    menuBackdropCtx.save();
+    menuBackdropCtx.globalAlpha = 0.28;
+
+    for (const actor of menuBackdropActors) {
+        actor.x += actor.vx * deltaSeconds;
+        actor.y += actor.vy * deltaSeconds;
+
+        if (actor.x < -margin || actor.x > width + margin) {
+            actor.vx *= -1;
+        }
+        if (actor.y < -margin || actor.y > height + margin) {
+            actor.vy *= -1;
+        }
+
+        actor.x = Math.max(-margin, Math.min(width + margin, actor.x));
+        actor.y = Math.max(-margin, Math.min(height + margin, actor.y));
+
+        const bob = Math.sin(time * 1.4 + actor.bobOffset) * 2.2;
+        const drawX = actor.x;
+        const drawY = actor.y + bob;
+        const angle = Math.atan2(actor.vy, actor.vx);
+        const sprite = playerImages[actor.spriteName];
+
+        if (!sprite || !sprite.complete) continue;
+
+        menuBackdropCtx.save();
+        menuBackdropCtx.translate(drawX, drawY);
+        menuBackdropCtx.rotate(angle);
+        menuBackdropCtx.drawImage(sprite, -actor.size / 2, -actor.size / 2, actor.size, actor.size);
+        menuBackdropCtx.restore();
+    }
+
+    menuBackdropCtx.restore();
+
+    menuBackdropCtx.fillStyle = 'rgba(9, 15, 26, 0.22)';
+    menuBackdropCtx.fillRect(0, 0, width, height);
 }
 
 function selectEquip(type, value) {
@@ -401,6 +576,11 @@ function applyDeltaToGameState(delta) {
     // Handle removed bullets
     if (delta.removedBullets) {
         for (const bulletId of delta.removedBullets) {
+            const removedBullet = clientGameStateCache.bullets.get(bulletId);
+            if (removedBullet?.kind === 'rocket') {
+                spawnExplosiveEffect(removedBullet.x, removedBullet.y);
+                soundManager.play('explosion', 0.3);
+            }
             gameState.bullets = gameState.bullets.filter(b => b.id !== bulletId);
             clientGameStateCache.bullets.delete(bulletId);
         }
@@ -410,8 +590,9 @@ function applyDeltaToGameState(delta) {
     if (delta.removedGrenades) {
         for (const grenadeId of delta.removedGrenades) {
             const removedGrenade = clientGameStateCache.grenades.get(grenadeId);
-            if (removedGrenade?.kind === 'demoExplosive') {
+            if (removedGrenade?.kind === 'demoExplosive' || removedGrenade?.kind === 'grenade') {
                 spawnExplosiveEffect(removedGrenade.x, removedGrenade.y);
+                soundManager.play('explosion', 0.3);
             }
             gameState.grenades = gameState.grenades.filter(g => g.id !== grenadeId);
             clientGameStateCache.grenades.delete(grenadeId);
@@ -464,8 +645,15 @@ function draw(gameState) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // update health bar
-    healthFill.style.width = `${thisPlayer.HP / thisPlayer.maxHP * 100}%`;
-    healthText.textContent = `${thisPlayer.HP}/${thisPlayer.maxHP}`;
+    const healthRatio = thisPlayer.maxHP > 0 ? (thisPlayer.HP / thisPlayer.maxHP) : 0;
+    const overhealed = thisPlayer.HP > thisPlayer.maxHP;
+    const clampedPercent = Math.max(0, Math.min(100, healthRatio * 100));
+    healthFill.style.width = `${clampedPercent}%`;
+    healthText.textContent = `${Math.round(thisPlayer.HP)}/${Math.round(thisPlayer.maxHP)}`;
+    if (healthBar) {
+        healthBar.classList.toggle('overhealed', overhealed);
+    }
+    healthFill.classList.toggle('overhealed', overhealed);
     
     // update ammo display
     if (thisPlayer.primaryWeapon && thisPlayer.primaryWeapon.isReloading) {
@@ -578,14 +766,7 @@ function draw(gameState) {
     
     ctx.save();
     ctx.translate(-cameraX, -cameraY);
-    
-    ctx.beginPath();
-    ctx.arc(0, 0, mapRadius, 0, 2 * Math.PI);
-    ctx.fillStyle = MAP_COLOR;
-    ctx.fill();
-    ctx.strokeStyle = 'white';
-    ctx.lineWidth = 3;
-    ctx.stroke();
+    drawMapBackground(cameraX, cameraY);
     
     for (const obstacle of gameState.obstacles) {
         drawObstacle(obstacle);
@@ -604,6 +785,10 @@ function draw(gameState) {
             drawLaserBeam(player.laserBeam);
         }
     }
+
+    for (const player of gameState.players) {
+        drawHealingCircle(player);
+    }
     
     for (const player of gameState.players) {
         drawPlayer(player, thisPlayer);
@@ -618,6 +803,59 @@ function draw(gameState) {
     drawCombatTexts();
     
    ctx.restore();
+}
+
+function drawMapBackground(cameraX, cameraY) {
+    ctx.save();
+
+    ctx.beginPath();
+    ctx.arc(0, 0, mapRadius, 0, 2 * Math.PI);
+    ctx.fillStyle = MAP_COLOR;
+    ctx.fill();
+    ctx.clip();
+
+    const maxX = cameraX + canvas.width;
+    const maxY = cameraY + canvas.height;
+    const startX = Math.floor(cameraX / GRID_MINOR_SIZE) * GRID_MINOR_SIZE;
+    const startY = Math.floor(cameraY / GRID_MINOR_SIZE) * GRID_MINOR_SIZE;
+
+    for (let x = startX; x <= maxX; x += GRID_MINOR_SIZE) {
+        const gridIndex = Math.round(x / GRID_MINOR_SIZE);
+        const major = gridIndex % GRID_MAJOR_EVERY === 0;
+        ctx.strokeStyle = major ? GRID_MAJOR_COLOR : GRID_MINOR_COLOR;
+        ctx.lineWidth = major ? 1.4 : 1;
+        ctx.beginPath();
+        ctx.moveTo(x, cameraY);
+        ctx.lineTo(x, maxY);
+        ctx.stroke();
+    }
+
+    for (let y = startY; y <= maxY; y += GRID_MINOR_SIZE) {
+        const gridIndex = Math.round(y / GRID_MINOR_SIZE);
+        const major = gridIndex % GRID_MAJOR_EVERY === 0;
+        ctx.strokeStyle = major ? GRID_MAJOR_COLOR : GRID_MINOR_COLOR;
+        ctx.lineWidth = major ? 1.4 : 1;
+        ctx.beginPath();
+        ctx.moveTo(cameraX, y);
+        ctx.lineTo(maxX, y);
+        ctx.stroke();
+    }
+
+    const vignette = ctx.createRadialGradient(0, 0, mapRadius * 0.55, 0, 0, mapRadius);
+    vignette.addColorStop(0, "rgba(0, 0, 0, 0)");
+    vignette.addColorStop(1, "rgba(0, 0, 0, 0.14)");
+    ctx.fillStyle = vignette;
+    ctx.beginPath();
+    ctx.arc(0, 0, mapRadius, 0, 2 * Math.PI);
+    ctx.fill();
+
+    ctx.restore();
+
+    ctx.beginPath();
+    ctx.arc(0, 0, mapRadius, 0, 2 * Math.PI);
+    ctx.strokeStyle = "white";
+    ctx.lineWidth = 3;
+    ctx.stroke();
 }
 
 function drawCombatTexts() {
@@ -666,8 +904,70 @@ function drawObstacle(obstacle) {
         return;
     }
 
-    ctx.fillStyle = obstacle.color;
-    ctx.fillRect(obstacle.x, obstacle.y, obstacle.w, obstacle.h);
+    if (obstacle.image === 'turret_base.png') {
+        const baseW = obstacle.w || 36;
+        const baseH = obstacle.h || 36;
+
+        ctx.save();
+        ctx.translate(obstacle.x, obstacle.y);
+        if (playerImages.TurretBase.complete) {
+            ctx.drawImage(playerImages.TurretBase, -baseW / 2, -baseH / 2, baseW, baseH);
+        } else {
+            ctx.fillStyle = '#6f7683';
+            ctx.beginPath();
+            ctx.arc(0, 0, Math.max(baseW, baseH) * 0.5, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+
+        ctx.rotate(obstacle.angle || 0);
+        if (playerImages.TurretHead.complete) {
+            ctx.drawImage(playerImages.TurretHead, -baseW / 2, -baseH / 2, baseW, baseH);
+        } else {
+            ctx.fillStyle = '#444b57';
+            ctx.fillRect(0, -3, baseW * 0.55, 6);
+        }
+        ctx.restore();
+        return;
+    }
+
+    const obstacleColor = obstacle.color || '#7b8794';
+    const x = obstacle.x;
+    const y = obstacle.y;
+    const w = obstacle.w;
+    const h = obstacle.h;
+
+    ctx.save();
+
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.22)';
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetY = 2;
+    ctx.fillStyle = obstacleColor;
+    ctx.fillRect(x, y, w, h);
+
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+
+    const bevel = ctx.createLinearGradient(x, y, x + w, y + h);
+    bevel.addColorStop(0, 'rgba(255, 255, 255, 0.2)');
+    bevel.addColorStop(0.45, 'rgba(255, 255, 255, 0.05)');
+    bevel.addColorStop(1, 'rgba(0, 0, 0, 0.22)');
+    ctx.fillStyle = bevel;
+    ctx.fillRect(x, y, w, h);
+
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.38)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 1, y + 1, Math.max(0, w - 2), Math.max(0, h - 2));
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x + 1, y + h - 1);
+    ctx.lineTo(x + 1, y + 1);
+    ctx.lineTo(x + w - 1, y + 1);
+    ctx.stroke();
+
+    ctx.restore();
 }
 
 function getDistanceBetweenPlayers(playerA, playerB) {
@@ -846,6 +1146,38 @@ function drawPlayer(player, thisPlayer) {
     ctx.restore();
 }
 
+function drawHealingCircle(player) {
+    if (
+        player.sharedAbility?.name !== 'Healing Circle' ||
+        !player.sharedAbility?.isActive ||
+        player.sharedAbility?.duration <= 0
+    ) {
+        return;
+    }
+
+    const centerX = player.sharedAbility.effectX ?? player.x;
+    const centerY = player.sharedAbility.effectY ?? player.y;
+    const baseRadius = player.sharedAbility.effectRadius || 165;
+    const progress = 1 - Math.max(0, Math.min(1, (player.sharedAbility.currentDuration || 0) / player.sharedAbility.duration));
+    const animatedRadius = baseRadius + Math.sin(Date.now() / 120) * 3 + progress * 5;
+    const alpha = 0.42 * (1 - progress * 0.35);
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = '#66ff9f';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, animatedRadius, 0, 2 * Math.PI);
+    ctx.stroke();
+
+    ctx.globalAlpha = alpha * 0.24;
+    ctx.fillStyle = '#66ff9f';
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, Math.max(0, animatedRadius - 2), 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.restore();
+}
+
 function drawStunStars(player) {
     const time = Date.now() / 180;
     const baseY = -player.radius - 15;
@@ -934,6 +1266,38 @@ function updateLaserLoopAudio(thisPlayer) {
 }
 
 function drawBullet(bullet) {
+    if (bullet.kind === 'bubble') {
+        ctx.save();
+        ctx.globalAlpha = 0.78;
+        ctx.beginPath();
+        ctx.arc(bullet.x, bullet.y, bullet.radius, 0, 2 * Math.PI);
+        ctx.fillStyle = bullet.color || 'rgba(90, 195, 255, 0.62)';
+        ctx.fill();
+        ctx.globalAlpha = 0.95;
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#c6f2ff';
+        ctx.stroke();
+        ctx.globalAlpha = 0.35;
+        ctx.beginPath();
+        ctx.arc(bullet.x - bullet.radius * 0.28, bullet.y - bullet.radius * 0.28, Math.max(3, bullet.radius * 0.32), 0, 2 * Math.PI);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.restore();
+        return;
+    }
+    if (bullet.kind === 'rocket') {
+        const width = 40;
+        const height = 25;
+        const rotation = bullet.angle || 0;
+        if (playerImages.Missile.complete) {
+            ctx.save();
+            ctx.translate(bullet.x, bullet.y);
+            ctx.rotate(rotation);
+            ctx.drawImage(playerImages.Missile, -width / 2, -height / 2, width, height);
+            ctx.restore();
+            return;
+        }
+    }
     if (bullet.kind === 'reaverShard') {
         const size = 24;
         if (playerImages.ReaverShard.complete) {
@@ -1153,7 +1517,26 @@ function handleFiredWeapon() {
     if (thisPlayer?.primaryWeapon?.name === 'Laser Gun') {
         return;
     }
+    if (thisPlayer?.primaryWeapon?.name === 'Rocket Launcher') {
+        soundManager.play('rocket_launch', 0.3);
+        return;
+    }
     soundManager.play("shoot", 0.25);
+}
+
+function handleSpecialAbility() {
+    const thisPlayer = gameState.players.find((player) => player.id === socket.id);
+    if (thisPlayer?.specialAbility?.name === 'Reaver Shard') {
+        soundManager.play('reaver_fire', 0.25);
+    }
+}
+
+function handleKingAuraPulse() {
+    soundManager.play('bell', 0.28);
+}
+
+function handleReaverZap() {
+    soundManager.play('zap', 0.3);
 }
 
 function handleCombatText(data) {

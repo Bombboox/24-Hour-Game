@@ -24,6 +24,21 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            overflow: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            inset: -30% -20%;
+            pointer-events: none;
+            background:
+                radial-gradient(circle at 20% 25%, rgba(255, 95, 109, 0.2), transparent 34%),
+                radial-gradient(circle at 80% 72%, rgba(46, 196, 182, 0.2), transparent 36%),
+                radial-gradient(circle at 55% 45%, rgba(255, 222, 89, 0.16), transparent 30%);
+            filter: blur(24px);
+            animation: menuAmbientShift 11s ease-in-out infinite alternate;
+            z-index: -1;
         }
 
         #gameScreen {
@@ -33,6 +48,8 @@
             background: rgba(0, 255, 242, 0.199);
             align-items: center;
             justify-content: center;
+            position: relative;
+            z-index: 4;
         }
         
         #canvas {
@@ -51,6 +68,17 @@
             border: 2px solid rgba(255, 255, 255, 0.3);
             backdrop-filter: blur(10px);
             box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+            transition: box-shadow 0.25s ease, border-color 0.25s ease, background 0.25s ease;
+        }
+
+        .health-bar-container.overhealed {
+            background: rgba(125, 255, 232, 0.82);
+            border-color: rgba(208, 255, 246, 0.95);
+            box-shadow:
+                0 0 0 2px rgba(164, 255, 238, 0.55),
+                0 0 24px rgba(93, 255, 221, 0.75),
+                0 8px 20px rgba(0, 0, 0, 0.45);
+            animation: overhealAura 1.3s ease-in-out infinite;
         }
         
         .weapon-info-container {
@@ -252,6 +280,11 @@
             position: relative;
             box-shadow: 0 0 10px rgba(255, 71, 87, 0.5);
         }
+
+        .health-fill.overhealed {
+            background: linear-gradient(45deg, #4dffcf, #34f5ff, #7effa4);
+            box-shadow: 0 0 16px rgba(95, 255, 223, 0.8);
+        }
         
         .health-fill::before {
             content: '';
@@ -279,6 +312,27 @@
             0% { left: -100%; }
             100% { left: 100%; }
         }
+
+        @keyframes overhealAura {
+            0% {
+                box-shadow:
+                    0 0 0 2px rgba(164, 255, 238, 0.45),
+                    0 0 20px rgba(93, 255, 221, 0.55),
+                    0 8px 20px rgba(0, 0, 0, 0.45);
+            }
+            50% {
+                box-shadow:
+                    0 0 0 3px rgba(198, 255, 247, 0.8),
+                    0 0 34px rgba(120, 255, 228, 0.95),
+                    0 8px 20px rgba(0, 0, 0, 0.45);
+            }
+            100% {
+                box-shadow:
+                    0 0 0 2px rgba(164, 255, 238, 0.45),
+                    0 0 20px rgba(93, 255, 221, 0.55),
+                    0 8px 20px rgba(0, 0, 0, 0.45);
+            }
+        }
         
         .health-text {
             position: absolute;
@@ -303,6 +357,33 @@
             max-width: 400px;
             width: 100%;
             box-sizing: border-box;
+            position: relative;
+            z-index: 2;
+        }
+
+        #menu {
+            position: relative;
+            background: linear-gradient(160deg, rgba(24, 55, 82, 0.92), rgba(18, 140, 126, 0.88));
+            box-shadow:
+                0 20px 40px rgba(0, 0, 0, 0.35),
+                0 0 30px rgba(64, 191, 255, 0.2);
+            animation: menuPulse 3.5s ease-in-out infinite;
+            overflow: hidden;
+        }
+
+        #menu::before {
+            content: '';
+            position: absolute;
+            inset: -120% -40%;
+            background: linear-gradient(125deg, transparent 38%, rgba(255, 255, 255, 0.15) 50%, transparent 62%);
+            transform: rotate(10deg);
+            animation: menuSweep 7s linear infinite;
+            pointer-events: none;
+        }
+
+        #menu > * {
+            position: relative;
+            z-index: 1;
         }
 
         #characterMenu {
@@ -430,6 +511,92 @@
         .cancel-button:hover {
             background: linear-gradient(45deg, #d32f2f, #b71c1c);
             box-shadow: 0 12px 30px rgba(231, 76, 60, 0.4);
+        }
+
+        .patch-notes-card {
+            margin-top: 22px;
+            padding: 14px 14px 12px;
+            text-align: left;
+            border-radius: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.22);
+            background: rgba(8, 18, 30, 0.55);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+
+        .patch-notes-header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            color: white;
+            font-size: 14px;
+            letter-spacing: 0.7px;
+            text-transform: uppercase;
+        }
+
+        .patch-notes-version {
+            font-size: 11px;
+            color: rgba(212, 235, 255, 0.85);
+        }
+
+        .patch-notes-list {
+            margin: 0;
+            padding-left: 18px;
+            max-height: 130px;
+            overflow-y: auto;
+            color: rgba(243, 250, 255, 0.92);
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .patch-notes-list li {
+            margin-bottom: 6px;
+        }
+
+        .patch-notes-list li:last-child {
+            margin-bottom: 0;
+        }
+
+        .menu-link {
+            position: fixed;
+            top: 18px;
+            right: 20px;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.35);
+            background: rgba(33, 31, 58, 0.82);
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            backdrop-filter: blur(6px);
+            box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
+            transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+            z-index: 300;
+        }
+
+        .menu-link:hover {
+            transform: translateY(-2px) scale(1.05);
+            border-color: rgba(255, 255, 255, 0.68);
+            background: rgba(88, 101, 242, 0.88);
+            box-shadow: 0 14px 34px rgba(88, 101, 242, 0.4);
+        }
+
+        .menu-link svg {
+            width: 26px;
+            height: 26px;
+            fill: currentColor;
+        }
+
+        #menuBackdrop {
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none;
+            z-index: 1;
         }
         
         .equip-tabs {
@@ -598,15 +765,72 @@
             from { opacity: 0; transform: scale(0.82) translateY(16px); }
             to { opacity: 1; transform: scale(1) translateY(0); }
         }
+
+        @keyframes menuPulse {
+            0%, 100% {
+                transform: scale(1);
+                box-shadow:
+                    0 20px 40px rgba(0, 0, 0, 0.35),
+                    0 0 30px rgba(64, 191, 255, 0.2);
+            }
+            50% {
+                transform: scale(1.012);
+                box-shadow:
+                    0 24px 52px rgba(0, 0, 0, 0.4),
+                    0 0 46px rgba(64, 191, 255, 0.35);
+            }
+        }
+
+        @keyframes menuSweep {
+            0% { transform: translateX(-120%) rotate(10deg); }
+            100% { transform: translateX(120%) rotate(10deg); }
+        }
+
+        @keyframes menuAmbientShift {
+            0% { transform: translate3d(-2%, -1%, 0) scale(1); }
+            100% { transform: translate3d(2%, 2%, 0) scale(1.05); }
+        }
+
+        @media (max-width: 640px) {
+            #menu, #characterMenu, #searchingMenu, #controlsMenu {
+                width: min(94vw, 400px);
+                padding: 42px 20px;
+            }
+
+            .patch-notes-list {
+                max-height: 120px;
+            }
+
+            .menu-link {
+                top: 12px;
+                right: 12px;
+                width: 44px;
+                height: 44px;
+            }
+        }
     </style>
 </head>
 <body>
+    <a class="menu-link" href="https://discord.gg/33QQhutqcS" target="_blank" rel="noopener noreferrer" aria-label="Join Discord server" title="Join Discord">
+        <svg viewBox="0 0 127.14 96.36" aria-hidden="true">
+            <path d="M107.7 8.07A105.15 105.15 0 0 0 81.47 0a72.06 72.06 0 0 0-3.36 6.83 97.68 97.68 0 0 0-29.11 0A72.37 72.37 0 0 0 45.64 0 105.89 105.89 0 0 0 19.39 8.09C2.79 32.65-1.72 56.6.54 80.21h.03A105.73 105.73 0 0 0 32.71 96a77.7 77.7 0 0 0 6.89-11.18 68.42 68.42 0 0 1-10.84-5.18c.91-.66 1.8-1.35 2.66-2.08a75.56 75.56 0 0 0 64.32 0c.87.73 1.76 1.42 2.67 2.08a68.68 68.68 0 0 1-10.86 5.19A77.35 77.35 0 0 0 94.44 96a105.25 105.25 0 0 0 32.15-15.78c2.65-27.38-4.53-51.12-18.89-72.15ZM42.45 65.69c-6.27 0-11.4-5.74-11.4-12.79s5-12.79 11.4-12.79c6.44 0 11.5 5.74 11.4 12.79 0 7.05-5.03 12.79-11.4 12.79Zm42.24 0c-6.27 0-11.4-5.74-11.4-12.79s5-12.79 11.4-12.79c6.44 0 11.5 5.74 11.4 12.79 0 7.05-4.96 12.79-11.4 12.79Z"/>
+        </svg>
+    </a>
+    <canvas id="menuBackdrop"></canvas>
+
     <div id="menu">
         <h1>Boox Shoot</h1>
         <button class="menu-button" onclick="startGame()">1v1 Match</button>
         <button class="menu-button ffa-button" onclick="startFreeForAll()">Free For All</button>
         <button class="menu-button character-button" onclick="showCharacter()">Character</button>
         <button class="menu-button" onclick="showControls()">Controls</button>
+        <div class="patch-notes-card">
+            <div class="patch-notes-header">
+                <span>Patch Notes</span>
+                <span id="patchNotesVersion" class="patch-notes-version"></span>
+            </div>
+            <ul id="patchNotesList" class="patch-notes-list"></ul>
+        </div>
     </div>
     
     <div id="characterMenu">
@@ -626,6 +850,8 @@
                 <button class="equip-option" data-type="weapon" data-value="sniper" onclick="selectEquip('weapon', 'sniper')">Sniper</button>
                 <button class="equip-option" data-type="weapon" data-value="laser" onclick="selectEquip('weapon', 'laser')">Laser Gun</button>
                 <button class="equip-option" data-type="weapon" data-value="taser" onclick="selectEquip('weapon', 'taser')">Taser</button>
+                <button class="equip-option" data-type="weapon" data-value="rocket" onclick="selectEquip('weapon', 'rocket')">Rocket Launcher</button>
+                <button class="equip-option" data-type="weapon" data-value="bubble" onclick="selectEquip('weapon', 'bubble')">Bubble Launcher</button>
             </div>
         </div>
 
@@ -637,6 +863,8 @@
                 <button class="equip-option" data-type="secondary" data-value="sniper" onclick="selectEquip('secondary', 'sniper')">Sniper</button>
                 <button class="equip-option" data-type="secondary" data-value="laser" onclick="selectEquip('secondary', 'laser')">Laser Gun</button>
                 <button class="equip-option" data-type="secondary" data-value="taser" onclick="selectEquip('secondary', 'taser')">Taser</button>
+                <button class="equip-option" data-type="secondary" data-value="rocket" onclick="selectEquip('secondary', 'rocket')">Rocket Launcher</button>
+                <button class="equip-option" data-type="secondary" data-value="bubble" onclick="selectEquip('secondary', 'bubble')">Bubble Launcher</button>
             </div>
         </div>
 
@@ -654,6 +882,8 @@
                 <button class="equip-option" data-type="sharedAbility" data-value="grenade" onclick="selectEquip('sharedAbility', 'grenade')">Grenade</button>
                 <button class="equip-option" data-type="sharedAbility" data-value="invisibility" onclick="selectEquip('sharedAbility', 'invisibility')">Invisibility</button>
                 <button class="equip-option" data-type="sharedAbility" data-value="shield" onclick="selectEquip('sharedAbility', 'shield')">Shield</button>
+                <button class="equip-option" data-type="sharedAbility" data-value="turret" onclick="selectEquip('sharedAbility', 'turret')">Auto Turret</button>
+                <button class="equip-option" data-type="sharedAbility" data-value="healingcircle" onclick="selectEquip('sharedAbility', 'healingcircle')">Healing Circle</button>
             </div>
         </div>
         <button class="menu-button" onclick="save()">Save</button>
@@ -699,7 +929,7 @@
     </div>
     
     <div id="gameScreen">
-        <div class="health-bar-container">
+        <div class="health-bar-container" id="healthBar">
             <div class="health-label">Health</div>
             <div class="health-bar">
                 <div class="health-fill" id="healthFill" style="width: 100%;"></div>
@@ -752,6 +982,7 @@
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.8.1/socket.io.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/msgpack-lite/0.1.26/msgpack.min.js"></script>
+    <script src="patchNotes.js"></script>
     <script src="storage.js"></script>
     <script src="sounds.js"></script>
     <script src="main.js"></script>

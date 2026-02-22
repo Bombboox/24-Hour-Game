@@ -1,6 +1,16 @@
-const { Shield } = require('./obstacle');
+const { Shield, AutoTurret } = require('./obstacle');
 const { GrenadeProjectile, DemoExplosive } = require('./grenade');
 const { Bullet } = require('./bullet');
+
+function emitHealingCombatText(gameState, character, amount) {
+    if (!gameState?.io || !character?.id || amount <= 0) return;
+    gameState.io.to(character.id).emit('combatText', {
+        type: 'healing',
+        amount,
+        x: character.x,
+        y: character.y - character.radius - 10
+    });
+}
 
 class SpecialAbility {
     constructor(options = {}) {
@@ -123,11 +133,11 @@ class PassiveAbility {
 class NinjaMomentum extends PassiveAbility {
     constructor(options = {}) {
         super({
-            name: 'Momentum',
+            name: 'Unrelenting',
             key: 'Passive',
             cooldown: 0,
             duration: 125,
-            description: 'Kill: +5% permanent speed (max 10 stacks). Also gain +20% speed for 5s after each kill.',
+            description: 'Kill: +5% permanent speed (max 10 stacks). Also gain +20% speed for 5s after each kill as well as immediate healing.',
             ...options
         });
         this.maxStacks = 10;
@@ -142,10 +152,14 @@ class NinjaMomentum extends PassiveAbility {
         character.passiveSpeedBonus = 1 + stackMultiplier + tempMultiplier;
     }
 
-    onKill(character) {
+    onKill(character, victim, gameState) {
+        const hpBefore = character.HP;
         this.stacks = Math.min(this.maxStacks, this.stacks + 1);
         this.activate();
         this.updateSpeedBuff(character);
+        character.HP = Math.min(character.HP + 50, character.maxHP * 2);
+        const healedAmount = Math.max(0, character.HP - hpBefore);
+        emitHealingCombatText(gameState, character, healedAmount);
     }
 
     onUpdate(deltaTime, character) {
@@ -168,7 +182,7 @@ class BerserkerBloodrush extends PassiveAbility {
             key: 'Passive',
             cooldown: 750,
             duration: 150,
-            description: 'Below 40% HP: gain 24% lifesteal for 6s. 30s cooldown.',
+            description: 'Below 40% HP: gain 40% lifesteal for 6s. 30s cooldown.',
             ...options
         });
         this.triggerThreshold = 0.4;
@@ -204,7 +218,7 @@ class KingGoldenDomain extends PassiveAbility {
             ...options
         });
         this.isToggledOn = false;
-        this.pulseInterval = 125;
+        this.pulseInterval = 75;
         this.pulseTimer = this.pulseInterval;
         this.auraRadius = 260;
         this.slowDuration = 125;
@@ -230,6 +244,9 @@ class KingGoldenDomain extends PassiveAbility {
 
         this.pulseTimer = this.pulseInterval;
         character.kingAuraPulseTimer = this.visualPulseDuration;
+        if (gameState?.io && character?.id) {
+            gameState.io.to(character.id).emit('kingAuraPulse');
+        }
 
         for (const target of gameState.players) {
             if (!target || target.id === character.id) continue;
@@ -454,6 +471,9 @@ class ReaverArcPassive extends PassiveAbility {
 
         this.activate();
         this.startCooldown();
+        if (gameState?.io && character?.id) {
+            gameState.io.to(character.id).emit('reaverZap');
+        }
         return true;
     }
 
@@ -492,6 +512,7 @@ class ReaverShards extends SpecialAbility {
         if (!gameState?.bullets) return false;
 
         this.charges -= 1;
+        
         if (this.charges < this.maxCharges && this.chargeRegenTimer <= 0) {
             this.chargeRegenTimer = 0.01;
         }
@@ -582,14 +603,17 @@ class Enlarge extends SpecialAbility {
         this.healthMultiplier = 1.5;
     }
 
-    onStart(character) {
+    onStart(character, gameState) {
         this.originalRadius = character.radius;
         this.originalMaxHP = character.maxHP;
         this.originalDefense = character.defense ?? 1;
+        const hpBefore = character.HP;
 
         character.radius = this.originalRadius * this.radiusMultiplier;
         character.maxHP = this.originalMaxHP * this.healthMultiplier;
         character.HP = Math.min(character.HP * 1.5 + 100, character.maxHP);
+        const healedAmount = Math.max(0, character.HP - hpBefore);
+        emitHealingCombatText(gameState, character, healedAmount);
         character.enlarged = true;
         character.defense = 0.5;
     }
@@ -758,6 +782,99 @@ class ShieldBarrier extends SpecialAbility {
     }
 }
 
+class TurretAbility extends SpecialAbility {
+    constructor(options = {}) {
+        super({
+            name: 'Auto Turret',
+            cooldown: 360,
+            duration: 0,
+            ...options
+        });
+    }
+
+    onStart(character, gameState) {
+        if (!gameState?.obstacles) return;
+
+        const turretSize = 36;
+        const turret = new AutoTurret({
+            x: character.x,
+            y: character.y,
+            w: turretSize,
+            h: turretSize,
+            ownerId: character.id,
+            health: 110,
+            duration: 750
+        });
+
+        gameState.obstacles.push(turret);
+    }
+}
+
+class HealingCircle extends SpecialAbility {
+    constructor(options = {}) {
+        super({
+            name: 'Healing Circle',
+            cooldown: 360,
+            duration: 150,
+            ...options
+        });
+        this.healPerSecondRatio = options.healPerSecondRatio ?? 0.05;
+        this.effectRadius = options.effectRadius ?? 165;
+        this.effectX = null;
+        this.effectY = null;
+        this.healTextTimer = 0;
+        this.healTextInterval = options.healTextInterval ?? 10;
+        this.pendingHealText = 0;
+    }
+
+    onStart(character) {
+        this.effectX = character.x;
+        this.effectY = character.y;
+        this.healTextTimer = 0;
+        this.pendingHealText = 0;
+    }
+
+    update(deltaTime, character, gameState) {
+        if (this.isActive) {
+            const dx = character.x - (this.effectX ?? character.x);
+            const dy = character.y - (this.effectY ?? character.y);
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance <= this.effectRadius) {
+                const hpBefore = character.HP;
+                const healAmount = character.maxHP * this.healPerSecondRatio * (deltaTime / 25);
+                if(character.HP < character.maxHP) character.HP = Math.min(character.maxHP, character.HP + healAmount);
+                this.pendingHealText += Math.max(0, character.HP - hpBefore);
+            }
+
+            this.healTextTimer += deltaTime;
+            if (this.healTextTimer >= this.healTextInterval) {
+                emitHealingCombatText(gameState, character, this.pendingHealText);
+                this.pendingHealText = 0;
+                this.healTextTimer = 0;
+            }
+
+            this.currentDuration -= deltaTime;
+            if (this.currentDuration <= 0) {
+                this.isActive = false;
+                this.currentDuration = 0;
+                emitHealingCombatText(gameState, character, this.pendingHealText);
+                this.pendingHealText = 0;
+                this.onEnd(character, gameState);
+            }
+        } else {
+            this.currentCooldown -= deltaTime;
+        }
+    }
+
+    onEnd() {
+        this.effectX = null;
+        this.effectY = null;
+        this.healTextTimer = 0;
+        this.pendingHealText = 0;
+    }
+}
+
 class Invisibility extends SpecialAbility {
     constructor(options = {}) {
         super({
@@ -794,5 +911,7 @@ module.exports = {
     Berserk,
     Grenade,
     Invisibility,
-    ShieldBarrier
+    ShieldBarrier,
+    TurretAbility,
+    HealingCircle
 };

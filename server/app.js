@@ -7,8 +7,8 @@ const path = require('path');
 const msgpack = require('msgpack-lite');
 const { createGameState, gameLoop, generateNewMap } = require('./game');
 const { Berserker, Ninja, King, Demoman, Reaver } = require('./character');
-const { M4, Sniper, Pistol, Shotgun, LaserGun, Taser } = require('./weapon');
-const { Grenade, Invisibility, ShieldBarrier } = require('./specialAbilities');
+const { M4, Sniper, Pistol, Shotgun, LaserGun, Taser, RocketLauncher, BubbleLauncher } = require('./weapon');
+const { Grenade, Invisibility, ShieldBarrier, TurretAbility, HealingCircle } = require('./specialAbilities');
 const { MAP_RADIUS, FRAME_RATE } = require('./constants');
 const { GameStateCache } = require('./gameStateCache');
 const { Worker } = require('worker_threads');
@@ -57,7 +57,9 @@ const WEAPON_CLASSES = {
     pistol: Pistol,
     sniper: Sniper,
     laser: LaserGun,
-    taser: Taser
+    taser: Taser,
+    rocket: RocketLauncher,
+    bubble: BubbleLauncher
 };
 
 const SECONDARY_WEAPON_CLASSES = {
@@ -66,7 +68,9 @@ const SECONDARY_WEAPON_CLASSES = {
     pistol: Pistol,
     sniper: Sniper,
     laser: LaserGun,
-    taser: Taser
+    taser: Taser,
+    rocket: RocketLauncher,
+    bubble: BubbleLauncher
 };
 
 const VALID_CHARACTERS = Object.keys(CHARACTER_CLASSES);
@@ -75,7 +79,9 @@ const VALID_SECONDARY_WEAPONS = Object.keys(SECONDARY_WEAPON_CLASSES);
 const SHARED_ABILITY_CLASSES = {
     grenade: Grenade,
     invisibility: Invisibility,
-    shield: ShieldBarrier
+    shield: ShieldBarrier,
+    turret: TurretAbility,
+    healingcircle: HealingCircle
 };
 const VALID_SHARED_ABILITIES = Object.keys(SHARED_ABILITY_CLASSES);
 const DEFAULT_PRIMARY_WEAPON = 'm4';
@@ -271,7 +277,7 @@ function makeID(length) {
 }
 
 function getFallbackSecondaryWeapon(primaryWeaponType) {
-    const fallbackOrder = [DEFAULT_SECONDARY_WEAPON, DEFAULT_PRIMARY_WEAPON, 'shotgun', 'sniper'];
+    const fallbackOrder = [DEFAULT_SECONDARY_WEAPON, DEFAULT_PRIMARY_WEAPON, 'shotgun', 'sniper', 'laser', 'taser', 'rocket', 'bubble'];
     return fallbackOrder.find((weapon) => weapon !== primaryWeaponType) || DEFAULT_SECONDARY_WEAPON;
 }
 
