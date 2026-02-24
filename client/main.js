@@ -145,6 +145,12 @@ var gameState = {
     grenades: [],
     obstacles: [],
 }
+const SNAPSHOT_BUFFER_SIZE = 90;
+const RENDER_INTERPOLATION_DELAY_MS = 100;
+const MAX_EXTRAPOLATION_MS = 120;
+let snapshotBuffer = [];
+let renderLoopId = null;
+let mainInitialized = false;
 
 const combatTexts = [];
 const explosiveEffects = [];
@@ -206,6 +212,11 @@ function sanitizePlayerSettings(settings) {
 }
 
 function main() {
+    if (mainInitialized) {
+        return;
+    }
+    mainInitialized = true;
+
     canvas.width = 800;
     canvas.height = 600;
 
@@ -240,6 +251,8 @@ function main() {
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mousedown', handleMouseDown);
     document.addEventListener('mouseup', handleMouseUp);
+
+    startRenderLoop();
 }
 
 function hideAllMenus() {
@@ -542,8 +555,8 @@ function handleGameState(deltaData) {
 
     // Apply delta updates to local game state
     applyDeltaToGameState(deltaData);
-    
-    requestAnimationFrame(() => draw(gameState));
+
+    pushStateSnapshot(gameState, deltaData?.frameNumber);
 }
 
 function resetClientCache() {
@@ -557,6 +570,196 @@ function resetClientCache() {
     clientGameStateCache.obstacles.clear();
     combatTexts.length = 0;
     explosiveEffects.length = 0;
+    snapshotBuffer = [];
+}
+
+function startRenderLoop() {
+    if (renderLoopId !== null) {
+        return;
+    }
+
+    const step = () => {
+        renderLoopId = requestAnimationFrame(step);
+        if (!gameActive) {
+            return;
+        }
+
+        const renderState = getInterpolatedRenderState();
+        if (!renderState) {
+            return;
+        }
+
+        draw(renderState);
+    };
+
+    renderLoopId = requestAnimationFrame(step);
+}
+
+function getNowMs() {
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+        return performance.now();
+    }
+    return Date.now();
+}
+
+function cloneStateSnapshot(state) {
+    return {
+        players: (state.players || []).map((player) => ({ ...player })),
+        bullets: (state.bullets || []).map((bullet) => ({ ...bullet })),
+        grenades: (state.grenades || []).map((grenade) => ({ ...grenade })),
+        obstacles: (state.obstacles || []).map((obstacle) => ({ ...obstacle })),
+    };
+}
+
+function pushStateSnapshot(state, frameNumber = null) {
+    snapshotBuffer.push({
+        frameNumber: typeof frameNumber === 'number' ? frameNumber : null,
+        receivedAt: getNowMs(),
+        state: cloneStateSnapshot(state)
+    });
+
+    if (snapshotBuffer.length > SNAPSHOT_BUFFER_SIZE) {
+        snapshotBuffer.splice(0, snapshotBuffer.length - SNAPSHOT_BUFFER_SIZE);
+    }
+}
+
+function getInterpolatedRenderState() {
+    if (snapshotBuffer.length === 0) {
+        return null;
+    }
+    if (snapshotBuffer.length === 1) {
+        return cloneStateSnapshot(snapshotBuffer[0].state);
+    }
+
+    const now = getNowMs();
+    const targetTime = now - RENDER_INTERPOLATION_DELAY_MS;
+
+    let newerIndex = -1;
+    for (let i = 0; i < snapshotBuffer.length; i++) {
+        if (snapshotBuffer[i].receivedAt >= targetTime) {
+            newerIndex = i;
+            break;
+        }
+    }
+
+    if (newerIndex === 0) {
+        return cloneStateSnapshot(snapshotBuffer[0].state);
+    }
+
+    if (newerIndex === -1) {
+        const latest = snapshotBuffer[snapshotBuffer.length - 1];
+        const previous = snapshotBuffer[snapshotBuffer.length - 2];
+        return extrapolateSnapshot(latest, previous, now);
+    }
+
+    const newer = snapshotBuffer[newerIndex];
+    const older = snapshotBuffer[newerIndex - 1];
+    return interpolateSnapshots(older, newer, targetTime);
+}
+
+function interpolateSnapshots(olderSnapshot, newerSnapshot, targetTime) {
+    const olderTime = olderSnapshot.receivedAt;
+    const newerTime = newerSnapshot.receivedAt;
+    const timeSpan = Math.max(1, newerTime - olderTime);
+    const alpha = Math.max(0, Math.min(1, (targetTime - olderTime) / timeSpan));
+
+    const olderState = olderSnapshot.state;
+    const newerState = newerSnapshot.state;
+
+    return {
+        players: interpolateEntities(olderState.players, newerState.players, alpha, ['x', 'y'], ['angle']),
+        bullets: interpolateEntities(olderState.bullets, newerState.bullets, alpha, ['x', 'y'], ['angle']),
+        grenades: interpolateEntities(olderState.grenades, newerState.grenades, alpha, ['x', 'y'], ['spin']),
+        obstacles: interpolateEntities(olderState.obstacles, newerState.obstacles, alpha, ['x', 'y'], ['angle']),
+    };
+}
+
+function extrapolateSnapshot(latestSnapshot, previousSnapshot, now) {
+    if (!previousSnapshot) {
+        return cloneStateSnapshot(latestSnapshot.state);
+    }
+
+    const sampleSpan = latestSnapshot.receivedAt - previousSnapshot.receivedAt;
+    if (sampleSpan <= 0) {
+        return cloneStateSnapshot(latestSnapshot.state);
+    }
+
+    const extrapolationMs = Math.max(0, Math.min(MAX_EXTRAPOLATION_MS, now - latestSnapshot.receivedAt));
+    const alpha = extrapolationMs / sampleSpan;
+    const latestState = cloneStateSnapshot(latestSnapshot.state);
+    const previousState = previousSnapshot.state;
+
+    return {
+        players: extrapolateEntities(previousState.players, latestState.players, alpha, ['x', 'y'], ['angle']),
+        bullets: extrapolateEntities(previousState.bullets, latestState.bullets, alpha, ['x', 'y'], ['angle']),
+        grenades: extrapolateEntities(previousState.grenades, latestState.grenades, alpha, ['x', 'y'], ['spin']),
+        obstacles: extrapolateEntities(previousState.obstacles, latestState.obstacles, alpha, ['x', 'y'], ['angle']),
+    };
+}
+
+function interpolateEntities(previousEntities = [], nextEntities = [], alpha = 0, linearKeys = [], angularKeys = []) {
+    const previousById = new Map(previousEntities.map((entity) => [entity.id, entity]));
+
+    return nextEntities.map((nextEntity) => {
+        const previousEntity = previousById.get(nextEntity.id);
+        if (!previousEntity) {
+            return { ...nextEntity };
+        }
+
+        const merged = { ...nextEntity };
+        for (const key of linearKeys) {
+            if (typeof previousEntity[key] === 'number' && typeof nextEntity[key] === 'number') {
+                merged[key] = lerp(previousEntity[key], nextEntity[key], alpha);
+            }
+        }
+        for (const key of angularKeys) {
+            if (typeof previousEntity[key] === 'number' && typeof nextEntity[key] === 'number') {
+                merged[key] = lerpAngle(previousEntity[key], nextEntity[key], alpha);
+            }
+        }
+        return merged;
+    });
+}
+
+function extrapolateEntities(previousEntities = [], latestEntities = [], alpha = 0, linearKeys = [], angularKeys = []) {
+    const previousById = new Map(previousEntities.map((entity) => [entity.id, entity]));
+
+    return latestEntities.map((latestEntity) => {
+        const previousEntity = previousById.get(latestEntity.id);
+        if (!previousEntity) {
+            return { ...latestEntity };
+        }
+
+        const projected = { ...latestEntity };
+        for (const key of linearKeys) {
+            if (typeof previousEntity[key] === 'number' && typeof latestEntity[key] === 'number') {
+                const velocity = latestEntity[key] - previousEntity[key];
+                projected[key] = latestEntity[key] + velocity * alpha;
+            }
+        }
+        for (const key of angularKeys) {
+            if (typeof previousEntity[key] === 'number' && typeof latestEntity[key] === 'number') {
+                const delta = shortestAngleDelta(previousEntity[key], latestEntity[key]);
+                projected[key] = latestEntity[key] + delta * alpha;
+            }
+        }
+        return projected;
+    });
+}
+
+function lerp(start, end, alpha) {
+    return start + (end - start) * alpha;
+}
+
+function lerpAngle(start, end, alpha) {
+    return start + shortestAngleDelta(start, end) * alpha;
+}
+
+function shortestAngleDelta(start, end) {
+    let delta = end - start;
+    while (delta > Math.PI) delta -= Math.PI * 2;
+    while (delta < -Math.PI) delta += Math.PI * 2;
+    return delta;
 }
 
 function applyDeltaToGameState(delta) {

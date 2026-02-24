@@ -6,7 +6,7 @@ const { createGameState, gameLoop, generateNewMap } = require('./game');
 const { Berserker, Ninja, King, Demoman, Reaver } = require('./character');
 const { M4, Sniper, Pistol, Shotgun, LaserGun, Taser, RocketLauncher, BubbleLauncher } = require('./weapon');
 const { Grenade, Invisibility, ShieldBarrier, TurretAbility, HealingCircle } = require('./specialAbilities');
-const { MAP_RADIUS, FRAME_RATE } = require('./constants');
+const { MAP_RADIUS, FRAME_RATE, SNAPSHOT_RATE } = require('./constants');
 const { GameStateCache } = require('./gameStateCache');
 const { Worker } = require('worker_threads');
 
@@ -902,6 +902,7 @@ io.on('connection', (socket) => {
 });
 
 const FRAME_INTERVAL = 1000 / FRAME_RATE;
+const SNAPSHOT_INTERVAL = 1000 / SNAPSHOT_RATE;
 const DELTA_TIME_DIVISOR = 40;
 
 function startGameInterval(gameCode) {
@@ -910,6 +911,7 @@ function startGameInterval(gameCode) {
     }
     
     let lastTime = Date.now();
+    let lastSnapshotTime = lastTime;
     const intervalID = setInterval(() => {
         const gameState = state.get(gameCode);
         if (!gameState) {
@@ -924,7 +926,11 @@ function startGameInterval(gameCode) {
         
         // Use worker thread for heavy computations if needed
         gameLoop(gameState, deltaTime, io);
-        emitGameState(gameCode, gameState);
+
+        if (currentTime - lastSnapshotTime >= SNAPSHOT_INTERVAL) {
+            emitGameState(gameCode, gameState);
+            lastSnapshotTime = currentTime;
+        }
 
         if (
             gameState.gameMode === '1v1' &&
