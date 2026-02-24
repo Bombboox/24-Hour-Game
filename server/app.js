@@ -6,7 +6,7 @@ const { createGameState, gameLoop, generateNewMap } = require('./game');
 const { Berserker, Ninja, King, Demoman, Reaver } = require('./character');
 const { M4, Sniper, Pistol, Shotgun, LaserGun, Taser, RocketLauncher, BubbleLauncher } = require('./weapon');
 const { Grenade, Invisibility, ShieldBarrier, TurretAbility, HealingCircle } = require('./specialAbilities');
-const { MAP_RADIUS, FRAME_RATE, SNAPSHOT_RATE } = require('./constants');
+const { MAP_RADIUS, FRAME_RATE } = require('./constants');
 const { GameStateCache } = require('./gameStateCache');
 const { Worker } = require('worker_threads');
 
@@ -412,12 +412,26 @@ function serveClientFile(res, requestedPath) {
 
     fs.readFile(normalized, (error, data) => {
         if (error) {
-            sendResponse('404 Not Found', 'Not Found');
-            return;
+          sendResponse('404 Not Found', 'Not Found');
+          return;
         }
-
-        sendResponse('200 OK', data, getMimeType(normalized));
-    });
+        
+        res.cork(() => {
+          res.writeStatus('200 OK');
+          res.writeHeader('Content-Type', getMimeType(normalized));
+          
+          // For HTML: never cache (so new asset filenames are always fetched)
+          // For JS/CSS: cache forever (use content hashing in filenames)
+          if (normalized.endsWith('.html')) {
+            res.writeHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.writeHeader('Pragma', 'no-cache');
+          } else {
+            res.writeHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          }
+          
+          res.end(data);
+        });
+      });
 }
 
 function createSocketFacade(ws, socketId) {
@@ -902,7 +916,6 @@ io.on('connection', (socket) => {
 });
 
 const FRAME_INTERVAL = 1000 / FRAME_RATE;
-const SNAPSHOT_INTERVAL = 1000 / SNAPSHOT_RATE;
 const DELTA_TIME_DIVISOR = 40;
 
 function startGameInterval(gameCode) {
@@ -911,7 +924,6 @@ function startGameInterval(gameCode) {
     }
     
     let lastTime = Date.now();
-    let lastSnapshotTime = lastTime;
     const intervalID = setInterval(() => {
         const gameState = state.get(gameCode);
         if (!gameState) {
@@ -926,11 +938,7 @@ function startGameInterval(gameCode) {
         
         // Use worker thread for heavy computations if needed
         gameLoop(gameState, deltaTime, io);
-
-        if (currentTime - lastSnapshotTime >= SNAPSHOT_INTERVAL) {
-            emitGameState(gameCode, gameState);
-            lastSnapshotTime = currentTime;
-        }
+        emitGameState(gameCode, gameState);
 
         if (
             gameState.gameMode === '1v1' &&
