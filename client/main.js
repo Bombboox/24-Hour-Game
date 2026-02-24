@@ -147,8 +147,16 @@ var gameState = {
 }
 const SNAPSHOT_BUFFER_SIZE = 90;
 const RENDER_INTERPOLATION_DELAY_MS = 100;
-const MAX_EXTRAPOLATION_MS = 120;
+const MAX_RENDER_INTERPOLATION_DELAY_MS = 240;
+const MAX_EXTRAPOLATION_MS = 220;
+const SNAPSHOT_INTERVAL_SMOOTHING = 0.15;
+const SNAPSHOT_JITTER_SMOOTHING = 0.2;
 let snapshotBuffer = [];
+let snapshotTiming = {
+    lastReceivedAt: null,
+    intervalEwma: 1000 / 30,
+    jitterEwma: 0
+};
 let renderLoopId = null;
 let mainInitialized = false;
 
@@ -571,6 +579,9 @@ function resetClientCache() {
     combatTexts.length = 0;
     explosiveEffects.length = 0;
     snapshotBuffer = [];
+    snapshotTiming.lastReceivedAt = null;
+    snapshotTiming.intervalEwma = 1000 / 30;
+    snapshotTiming.jitterEwma = 0;
 }
 
 function startRenderLoop() {
@@ -612,9 +623,18 @@ function cloneStateSnapshot(state) {
 }
 
 function pushStateSnapshot(state, frameNumber = null) {
+    const receivedAt = getNowMs();
+    if (snapshotTiming.lastReceivedAt !== null) {
+        const sampleInterval = Math.max(1, receivedAt - snapshotTiming.lastReceivedAt);
+        const intervalDelta = Math.abs(sampleInterval - snapshotTiming.intervalEwma);
+        snapshotTiming.intervalEwma = lerp(snapshotTiming.intervalEwma, sampleInterval, SNAPSHOT_INTERVAL_SMOOTHING);
+        snapshotTiming.jitterEwma = lerp(snapshotTiming.jitterEwma, intervalDelta, SNAPSHOT_JITTER_SMOOTHING);
+    }
+    snapshotTiming.lastReceivedAt = receivedAt;
+
     snapshotBuffer.push({
         frameNumber: typeof frameNumber === 'number' ? frameNumber : null,
-        receivedAt: getNowMs(),
+        receivedAt,
         state: cloneStateSnapshot(state)
     });
 
@@ -632,7 +652,7 @@ function getInterpolatedRenderState() {
     }
 
     const now = getNowMs();
-    const targetTime = now - RENDER_INTERPOLATION_DELAY_MS;
+    const targetTime = now - getDynamicInterpolationDelayMs();
 
     let newerIndex = -1;
     for (let i = 0; i < snapshotBuffer.length; i++) {
@@ -684,7 +704,11 @@ function extrapolateSnapshot(latestSnapshot, previousSnapshot, now) {
         return cloneStateSnapshot(latestSnapshot.state);
     }
 
-    const extrapolationMs = Math.max(0, Math.min(MAX_EXTRAPOLATION_MS, now - latestSnapshot.receivedAt));
+    const dynamicExtrapolationCap = Math.min(
+        MAX_EXTRAPOLATION_MS,
+        Math.max(90, snapshotTiming.intervalEwma * 2.5 + snapshotTiming.jitterEwma * 1.8)
+    );
+    const extrapolationMs = Math.max(0, Math.min(dynamicExtrapolationCap, now - latestSnapshot.receivedAt));
     const alpha = extrapolationMs / sampleSpan;
     const latestState = cloneStateSnapshot(latestSnapshot.state);
     const previousState = previousSnapshot.state;
@@ -695,6 +719,11 @@ function extrapolateSnapshot(latestSnapshot, previousSnapshot, now) {
         grenades: extrapolateEntities(previousState.grenades, latestState.grenades, alpha, ['x', 'y'], ['spin']),
         obstacles: extrapolateEntities(previousState.obstacles, latestState.obstacles, alpha, ['x', 'y'], ['angle']),
     };
+}
+
+function getDynamicInterpolationDelayMs() {
+    const estimatedDelay = snapshotTiming.intervalEwma * 2 + snapshotTiming.jitterEwma * 2.4;
+    return Math.max(RENDER_INTERPOLATION_DELAY_MS, Math.min(MAX_RENDER_INTERPOLATION_DELAY_MS, estimatedDelay));
 }
 
 function interpolateEntities(previousEntities = [], nextEntities = [], alpha = 0, linearKeys = [], angularKeys = []) {
