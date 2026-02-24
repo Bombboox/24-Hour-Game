@@ -17,7 +17,7 @@
     "http": "^0.0.1-security",
     "msgpack-lite": "^0.1.26",
     "path": "^0.12.7",
-    "socket.io": "^4.8.1"
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.55.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"

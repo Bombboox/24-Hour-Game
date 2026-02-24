@@ -73,7 +73,71 @@ playerImages.TurretBase.src = 'sprites/turret_base.png';
 playerImages.TurretHead.src = 'sprites/turret_head.png';
 obstacleImages.shield.src = 'sprites/shield.png';
 
-const socket = io();
+class WebSocketGameClient {
+    constructor() {
+        this.id = null;
+        this.listeners = new Map();
+        this.pendingPackets = [];
+        this.connect();
+    }
+
+    connect() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const socketUrl = `${protocol}//${window.location.host}/ws`;
+        this.ws = new WebSocket(socketUrl);
+        this.ws.binaryType = 'arraybuffer';
+
+        this.ws.addEventListener('open', () => {
+            while (this.pendingPackets.length > 0) {
+                this.ws.send(this.pendingPackets.shift());
+            }
+        });
+
+        this.ws.addEventListener('message', (event) => {
+            let payloadBuffer = event.data;
+            if (!(payloadBuffer instanceof ArrayBuffer)) {
+                return;
+            }
+
+            const packet = msgpack.decode(new Uint8Array(payloadBuffer));
+            const eventName = packet?.e;
+            const eventPayload = packet?.d;
+
+            if (eventName === '__welcome') {
+                this.id = eventPayload?.id || null;
+                return;
+            }
+
+            const handlers = this.listeners.get(eventName);
+            if (!handlers) {
+                return;
+            }
+
+            for (const handler of handlers) {
+                handler(eventPayload);
+            }
+        });
+    }
+
+    on(eventName, handler) {
+        if (!this.listeners.has(eventName)) {
+            this.listeners.set(eventName, []);
+        }
+        this.listeners.get(eventName).push(handler);
+    }
+
+    emit(eventName, payload) {
+        const encoded = msgpack.encode({ e: eventName, d: payload });
+        if (this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(encoded);
+            return;
+        }
+
+        this.pendingPackets.push(encoded);
+    }
+}
+
+const socket = new WebSocketGameClient();
 
 var gameState = {
     players: [],
@@ -475,11 +539,9 @@ function cancelSearch() {
 
 function handleGameState(deltaData) {
     if(!gameActive) return;
-    
-    const delta = msgpack.decode(new Uint8Array(deltaData));
-    
+
     // Apply delta updates to local game state
-    applyDeltaToGameState(delta);
+    applyDeltaToGameState(deltaData);
     
     requestAnimationFrame(() => draw(gameState));
 }

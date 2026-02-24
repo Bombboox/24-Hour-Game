@@ -1,9 +1,6 @@
-const express = require('express');
-const https = require('https');
-const http = require('http');
 const fs = require('fs');
-const socketIo = require('socket.io');
 const path = require('path');
+const uWS = require('uWebSockets.js');
 const msgpack = require('msgpack-lite');
 const { createGameState, gameLoop, generateNewMap } = require('./game');
 const { Berserker, Ninja, King, Demoman, Reaver } = require('./character');
@@ -13,27 +10,112 @@ const { MAP_RADIUS, FRAME_RATE } = require('./constants');
 const { GameStateCache } = require('./gameStateCache');
 const { Worker } = require('worker_threads');
 
-const app = express();
-
-let server;
 let protocol = 'https';
 let port = process.env.PORT || 443;
+const CLIENT_ROOT = path.resolve(__dirname, '../client');
+const TOPIC_USER_PREFIX = 'user:';
+const TOPIC_ROOM_PREFIX = 'room:';
 
-try {
-    const httpsOptions = {
-        key: fs.readFileSync('/etc/ssl/private/private-key.pem'),
-        cert: fs.readFileSync(path.join(__dirname, 'public-key.pem'))
-    };
-    server = https.createServer(httpsOptions, app);
-    console.log('HTTPS server created successfully');
-} catch (error) {
-    console.warn('HTTPS setup failed, falling back to HTTP:', error.message);
-    server = http.createServer(app);
-    protocol = 'http';
-    port = process.env.PORT || 3000;
+let wsApp;
+const socketsById = new Map();
+const socketState = new Map();
+const connectionHandlers = [];
+
+const serializerWorker = new Worker(path.join(__dirname, 'serializationWorker.js'));
+let nextSerializationJobId = 1;
+const pendingSerializationJobs = new Map();
+const roomEmitSequence = new Map();
+
+serializerWorker.on('message', (result) => {
+    const pending = pendingSerializationJobs.get(result.id);
+    if (!pending) {
+        return;
+    }
+
+    pendingSerializationJobs.delete(result.id);
+
+    if (result.error) {
+        pending.reject(new Error(result.error));
+        return;
+    }
+
+    pending.resolve(result.encoded);
+});
+
+serializerWorker.on('error', (error) => {
+    console.error('[ERROR] Serialization worker error', error);
+});
+
+function serializePacketAsync(event, payload) {
+    return new Promise((resolve, reject) => {
+        const id = nextSerializationJobId++;
+        pendingSerializationJobs.set(id, { resolve, reject });
+        serializerWorker.postMessage({ id, event, payload });
+    });
 }
 
-const io = socketIo(server);
+function socketTopic(id) {
+    return `${TOPIC_USER_PREFIX}${id}`;
+}
+
+function roomTopic(roomName) {
+    return `${TOPIC_ROOM_PREFIX}${roomName}`;
+}
+
+function encodePacket(event, payload) {
+    return msgpack.encode({ e: event, d: payload });
+}
+
+function sendSocketPacket(ws, event, payload) {
+    if (!ws) {
+        return;
+    }
+    ws.send(encodePacket(event, payload), true);
+}
+
+function publishRoomPacket(roomName, event, payload) {
+    wsApp.publish(roomTopic(roomName), encodePacket(event, payload), true);
+}
+
+function publishRoomEncoded(roomName, encodedPacket) {
+    wsApp.publish(roomTopic(roomName), encodedPacket, true);
+}
+
+function publishUserPacket(socketId, event, payload) {
+    wsApp.publish(socketTopic(socketId), encodePacket(event, payload), true);
+}
+
+const io = {
+    engine: {
+        get clientsCount() {
+            return socketsById.size;
+        }
+    },
+    on(eventName, handler) {
+        if (eventName === 'connection') {
+            connectionHandlers.push(handler);
+        }
+    },
+    to(socketId) {
+        return {
+            emit(event, payload) {
+                publishUserPacket(socketId, event, payload);
+            }
+        };
+    },
+    sockets: {
+        in(roomName) {
+            return {
+                emit(event, payload) {
+                    publishRoomPacket(roomName, event, payload);
+                },
+                emitEncoded(encodedPacket) {
+                    publishRoomEncoded(roomName, encodedPacket);
+                }
+            };
+        }
+    }
+};
 
 const state = new Map();
 const clientRooms = new Map();
@@ -145,16 +227,6 @@ function updateHealthMetrics() {
     healthMetrics.memoryUsage = process.memoryUsage().heapUsed / 1024 / 1024; // MB
 }
 
-
-app.get('/health', (req, res) => {
-    updateHealthMetrics();
-    res.json({
-        status: 'healthy',
-        uptime: Date.now() - healthMetrics.uptime,
-        metrics: healthMetrics
-    });
-});
-
 function isRateLimited(socketId, eventType) {
     const key = `${socketId}:${eventType}`;
     const now = Date.now();
@@ -259,12 +331,6 @@ setInterval(() => {
     updateHealthMetrics();
 }, 60000);
 
-app.use(express.static(path.join(__dirname, '../client')));
-
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, '../client/index.html'));
-});
-
 const ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 const ID_CHARS_LENGTH = ID_CHARS.length;
 
@@ -274,6 +340,233 @@ function makeID(length) {
         result += ID_CHARS[Math.floor(Math.random() * ID_CHARS_LENGTH)];
     }
     return result;
+}
+
+function getMimeType(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    switch (ext) {
+        case '.html':
+            return 'text/html; charset=utf-8';
+        case '.js':
+            return 'application/javascript; charset=utf-8';
+        case '.css':
+            return 'text/css; charset=utf-8';
+        case '.json':
+            return 'application/json; charset=utf-8';
+        case '.png':
+            return 'image/png';
+        case '.jpg':
+        case '.jpeg':
+            return 'image/jpeg';
+        case '.svg':
+            return 'image/svg+xml';
+        case '.ico':
+            return 'image/x-icon';
+        case '.mp3':
+            return 'audio/mpeg';
+        case '.wav':
+            return 'audio/wav';
+        case '.otf':
+            return 'font/otf';
+        case '.ttf':
+            return 'font/ttf';
+        default:
+            return 'application/octet-stream';
+    }
+}
+
+function serveClientFile(res, requestedPath) {
+    let aborted = false;
+    res.onAborted(() => {
+        aborted = true;
+    });
+
+    const sendResponse = (status, body, contentType = null) => {
+        if (aborted) {
+            return;
+        }
+
+        res.cork(() => {
+            res.writeStatus(status);
+            if (contentType) {
+                res.writeHeader('Content-Type', contentType);
+            }
+            res.end(body);
+        });
+    };
+
+    const cleanPath = requestedPath === '/' ? '/index.html' : requestedPath;
+    let decodedPath;
+    try {
+        decodedPath = decodeURIComponent(cleanPath);
+    } catch (error) {
+        sendResponse('400 Bad Request', 'Bad Request');
+        return;
+    }
+    const normalized = path.normalize(path.join(CLIENT_ROOT, decodedPath));
+
+    if (!normalized.startsWith(CLIENT_ROOT)) {
+        sendResponse('403 Forbidden', 'Forbidden');
+        return;
+    }
+
+    fs.readFile(normalized, (error, data) => {
+        if (error) {
+            sendResponse('404 Not Found', 'Not Found');
+            return;
+        }
+
+        sendResponse('200 OK', data, getMimeType(normalized));
+    });
+}
+
+function createSocketFacade(ws, socketId) {
+    const handlers = new Map();
+    const joinedTopics = new Set();
+
+    const socket = {
+        id: socketId,
+        number: null,
+        emit(event, payload) {
+            sendSocketPacket(ws, event, payload);
+        },
+        emitEncoded(encodedPacket) {
+            ws.send(encodedPacket, true);
+        },
+        on(event, handler) {
+            handlers.set(event, handler);
+        },
+        join(roomName) {
+            const topic = roomTopic(roomName);
+            ws.subscribe(topic);
+            joinedTopics.add(topic);
+        }
+    };
+
+    socketState.set(socketId, { socket, handlers, joinedTopics });
+    return socket;
+}
+
+function initializeWebServer() {
+    const keyPath = '/etc/ssl/private/private-key.pem';
+    const certPath = path.join(__dirname, 'public-key.pem');
+
+    try {
+        if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
+            wsApp = uWS.SSLApp({
+                key_file_name: keyPath,
+                cert_file_name: certPath
+            });
+            protocol = 'https';
+            port = process.env.PORT || 443;
+            logger.info('uWebSockets SSL app initialized');
+            return;
+        }
+    } catch (error) {
+        logger.warn('Failed to initialize SSL app, falling back to HTTP', { error: error.message });
+    }
+
+    wsApp = uWS.App();
+    protocol = 'http';
+    port = process.env.PORT || 3000;
+    logger.info('uWebSockets HTTP app initialized');
+}
+
+function bootstrapWebSocketRoutes() {
+    wsApp.ws('/ws', {
+        compression: uWS.DEDICATED_COMPRESSOR_16KB,
+        maxPayloadLength: 16 * 1024,
+        idleTimeout: 30,
+        upgrade(res, req, context) {
+            const socketId = makeID(14);
+            res.upgrade(
+                { socketId },
+                req.getHeader('sec-websocket-key'),
+                req.getHeader('sec-websocket-protocol'),
+                req.getHeader('sec-websocket-extensions'),
+                context
+            );
+        },
+        open(ws) {
+            const socketId = ws.getUserData().socketId;
+            socketsById.set(socketId, ws);
+            ws.subscribe(socketTopic(socketId));
+
+            const socket = createSocketFacade(ws, socketId);
+            socket.emit('__welcome', { id: socketId });
+
+            for (const handler of connectionHandlers) {
+                handler(socket);
+            }
+        },
+        message(ws, message) {
+            try {
+                const socketId = ws.getUserData().socketId;
+                const info = socketState.get(socketId);
+                if (!info) {
+                    return;
+                }
+
+                const decoded = msgpack.decode(Buffer.from(message));
+                const eventName = decoded?.e;
+                const payload = decoded?.d;
+
+                if (typeof eventName !== 'string') {
+                    return;
+                }
+
+                const handler = info.handlers.get(eventName);
+                if (handler) {
+                    handler(payload);
+                }
+            } catch (error) {
+                logger.warn('Failed to decode client packet', { error: error.message });
+            }
+        },
+        close(ws) {
+            const socketId = ws.getUserData().socketId;
+            const info = socketState.get(socketId);
+            if (!info) {
+                return;
+            }
+
+            const disconnectHandler = info.handlers.get('disconnect');
+            if (disconnectHandler) {
+                disconnectHandler();
+            }
+
+            socketsById.delete(socketId);
+            socketState.delete(socketId);
+        }
+    });
+
+    wsApp.get('/health', (res) => {
+        let aborted = false;
+        res.onAborted(() => {
+            aborted = true;
+        });
+
+        updateHealthMetrics();
+        if (aborted) {
+            return;
+        }
+
+        const payload = JSON.stringify({
+            status: 'healthy',
+            uptime: Date.now() - healthMetrics.uptime,
+            metrics: healthMetrics
+        });
+
+        res.cork(() => {
+            res.writeStatus('200 OK');
+            res.writeHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(payload);
+        });
+    });
+
+    wsApp.get('/*', (res, req) => {
+        serveClientFile(res, req.getUrl());
+    });
 }
 
 function getFallbackSecondaryWeapon(primaryWeaponType) {
@@ -375,9 +668,8 @@ function sendFullGameState(socket, gameCode) {
     if (!cache || !gameState) return;
     
     const fullState = cache.serializeGameState(gameState);
-    delete fullState.frameNumber; 
-    const packedData = msgpack.encode(fullState);
-    socket.emit('gameState', packedData);
+    delete fullState.frameNumber;
+    socket.emit('gameState', fullState);
 }
 
 io.on('connection', (socket) => {
@@ -659,30 +951,45 @@ function emitGameState(gameCode, gameState) {
     // send gamestate async to not block game loop
     setImmediate(() => {
         try {
+            let payload;
             if (gameState.cacheReset) {
                 cache.reset();
                 delete gameState.cacheReset;
-                const fullState = cache.serializeGameState(gameState);
-                delete fullState.frameNumber; 
-                const packedData = msgpack.encode(fullState);
-                io.sockets.in(gameCode).emit('gameState', packedData);
+                payload = cache.serializeGameState(gameState);
+                delete payload.frameNumber;
+            } else {
+                payload = cache.updateAndGetDelta(gameState);
+            }
+
+            if (!payload) {
                 return;
             }
-            
-            const delta = cache.updateAndGetDelta(gameState);
-            if (delta) {
-                const packedData = msgpack.encode(delta);
-                const fullStateSize = msgpack.encode(cache.serializeGameState(gameState)).length;
-                const compressionRatio = ((fullStateSize - packedData.length) / fullStateSize * 100).toFixed(1);
 
-                io.sockets.in(gameCode).emit('gameState', packedData);
-            }
+            const sequence = (roomEmitSequence.get(gameCode) || 0) + 1;
+            roomEmitSequence.set(gameCode, sequence);
+
+            serializePacketAsync('gameState', payload)
+                .then((encodedPacket) => {
+                    if (roomEmitSequence.get(gameCode) !== sequence) {
+                        return;
+                    }
+                    io.sockets.in(gameCode).emitEncoded(encodedPacket);
+                })
+                .catch((error) => {
+                    logger.error('Error serializing gameState packet', error);
+                    healthMetrics.errors++;
+                });
         } catch (error) {
             logger.error('Error in emitGameState', error);
             healthMetrics.errors++;
         }
     });
 }
+
+initializeWebServer();
+bootstrapWebSocketRoutes();
+
+let listenToken = null;
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
@@ -692,12 +999,14 @@ process.on('SIGTERM', () => {
     for (const intervalId of gameIntervals.values()) {
         clearInterval(intervalId);
     }
-    
-    // Close server
-    server.close(() => {
-        logger.info('Server closed');
-        process.exit(0);
-    });
+
+    serializerWorker.terminate();
+    if (listenToken) {
+        uWS.us_listen_socket_close(listenToken);
+    }
+
+    logger.info('Server closed');
+    process.exit(0);
 });
 
 process.on('SIGINT', () => {
@@ -707,15 +1016,24 @@ process.on('SIGINT', () => {
     for (const intervalId of gameIntervals.values()) {
         clearInterval(intervalId);
     }
-    
-    // Close server
-    server.close(() => {
-        logger.info('Server closed');
-        process.exit(0);
-    });
+
+    serializerWorker.terminate();
+    if (listenToken) {
+        uWS.us_listen_socket_close(listenToken);
+    }
+
+    logger.info('Server closed');
+    process.exit(0);
 });
 
 // Start server
-server.listen(port, '0.0.0.0', () => {
+wsApp.listen('0.0.0.0', Number(port), (token) => {
+    if (!token) {
+        logger.error(`Failed to listen on port ${port}`);
+        process.exit(1);
+        return;
+    }
+
+    listenToken = token;
     logger.info(`Server running at ${protocol}://localhost:${port}`);
 });
