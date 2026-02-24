@@ -1,5 +1,5 @@
 const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d"
+const ctx = canvas.getContext("2d");
 const menuBackdropCanvas = document.getElementById("menuBackdrop");
 const menuBackdropCtx = menuBackdropCanvas ? menuBackdropCanvas.getContext("2d") : null;
 const menu = document.getElementById("menu");
