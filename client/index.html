@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+    <title>Boox Shoot</title>
     <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css">
+    <link rel="icon" type="image/png" href="sprites/ninja.ico">
     <style>
         @font-face {
             font-family: 'CustomFont';
@@ -39,6 +40,38 @@
             filter: blur(24px);
             animation: menuAmbientShift 11s ease-in-out infinite alternate;
             z-index: -1;
+        }
+
+        /* Global game-themed scrollbars */
+        * {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(64, 191, 255, 0.92) rgba(8, 28, 44, 0.68);
+        }
+
+        *::-webkit-scrollbar {
+            width: 12px;
+            height: 12px;
+        }
+
+        *::-webkit-scrollbar-track {
+            background: linear-gradient(180deg, rgba(9, 30, 46, 0.86), rgba(14, 48, 70, 0.72));
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        *::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, rgba(62, 226, 216, 0.95), rgba(50, 150, 255, 0.9));
+            border-radius: 999px;
+            border: 2px solid rgba(8, 28, 44, 0.9);
+            box-shadow: 0 0 10px rgba(64, 191, 255, 0.45);
+        }
+
+        *::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(180deg, rgba(112, 245, 235, 0.98), rgba(86, 182, 255, 0.95));
+        }
+
+        *::-webkit-scrollbar-corner {
+            background: rgba(8, 28, 44, 0.75);
         }
 
         #gameScreen {
@@ -369,6 +402,7 @@
                 0 0 30px rgba(64, 191, 255, 0.2);
             animation: menuPulse 3.5s ease-in-out infinite;
             overflow: hidden;
+            height: 96.7vh;
         }
 
         #menu::before {

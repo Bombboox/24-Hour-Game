@@ -35,7 +35,6 @@ class Bullet {
         if (this.kind !== 'bubble') {
             for (const other of gameState.bullets || []) {
                 if (!other || other === this || !other.active || other.kind !== 'bubble') continue;
-                if (other.playerId === this.playerId) continue;
 
                 const dxToBubble = this.x - other.x;
                 const dyToBubble = this.y - other.y;
