@@ -1,5 +1,5 @@
 window.PATCH_NOTES = {
-    version: "v0.6.9",
+    version: "v0.6.10",
     entries: [
         "New Classes: Demoman and Reaver!",
         "New Weapons: Rocket Launcher, Bubble Launcher, Laser Gun and Taser",
