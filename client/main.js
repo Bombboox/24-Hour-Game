@@ -149,7 +149,6 @@ const SNAPSHOT_BUFFER_SIZE = 90;
 const RENDER_INTERPOLATION_DELAY_MS = 50;
 const MAX_RENDER_INTERPOLATION_DELAY_MS = 100;
 const MAX_EXTRAPOLATION_MS = 220;
-const MAX_EXTRAPOLATION_ALPHA = 0.35;
 const MIN_EXTRAPOLATION_SAMPLE_MS = 12;
 const MAX_LINEAR_EXTRAPOLATION_STEP = 42;
 const MAX_ANGULAR_EXTRAPOLATION_STEP = Math.PI * 0.35;
@@ -715,7 +714,7 @@ function getInterpolatedRenderState() {
 
     if (newerIndex === -1) {
         const latest = snapshotBuffer[snapshotBuffer.length - 1];
-        const previous = snapshotBuffer[snapshotBuffer.length - 2];
+        const previous = getPreviousDistinctSnapshot(snapshotBuffer.length - 1);
         return extrapolateSnapshot(latest, previous, now);
     }
 
@@ -745,6 +744,22 @@ function interpolateSnapshots(olderSnapshot, newerSnapshot, targetTime) {
     };
 }
 
+function getPreviousDistinctSnapshot(fromIndex) {
+    const latest = snapshotBuffer[fromIndex];
+    if (!latest) {
+        return null;
+    }
+
+    for (let i = fromIndex - 1; i >= 0; i--) {
+        const candidate = snapshotBuffer[i];
+        if (candidate && candidate.receivedAt < latest.receivedAt) {
+            return candidate;
+        }
+    }
+
+    return null;
+}
+
 function extrapolateSnapshot(latestSnapshot, previousSnapshot, now) {
     if (!previousSnapshot) {
         return cloneStateSnapshot(latestSnapshot.state);
@@ -765,7 +780,7 @@ function extrapolateSnapshot(latestSnapshot, previousSnapshot, now) {
         sampleSpan,
         snapshotTiming.intervalEwma * 0.65
     );
-    const alpha = Math.max(0, Math.min(MAX_EXTRAPOLATION_ALPHA, extrapolationMs / safeSampleSpan));
+    const alpha = Math.max(0, extrapolationMs / safeSampleSpan);
     netDebugStats.mode = 'extrapolate';
     netDebugStats.lastInterpolationAlpha = 0;
     netDebugStats.lastExtrapolationAlpha = alpha;
