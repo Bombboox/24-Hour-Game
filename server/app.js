@@ -417,20 +417,17 @@ function serveClientFile(res, requestedPath) {
         }
         
         res.cork(() => {
-          res.writeStatus('200 OK');
-          res.writeHeader('Content-Type', getMimeType(normalized));
+            res.writeStatus('200 OK');
+            res.writeHeader('Content-Type', getMimeType(normalized));
           
-          // For HTML: never cache (so new asset filenames are always fetched)
-          // For JS/CSS: cache forever (use content hashing in filenames)
-          if (normalized.endsWith('.html')) {
-            res.writeHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            // Disable ALL caching
+            res.writeHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
             res.writeHeader('Pragma', 'no-cache');
-          } else {
-            res.writeHeader('Cache-Control', 'public, max-age=31536000, immutable');
-          }
+            res.writeHeader('Expires', '0');
+            res.writeHeader('Surrogate-Control', 'no-store');
           
-          res.end(data);
-        });
+            res.end(data);
+          });
       });
 }
 
