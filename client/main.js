@@ -146,12 +146,14 @@ var gameState = {
     obstacles: [],
 }
 const SNAPSHOT_BUFFER_SIZE = 90;
-const RENDER_INTERPOLATION_DELAY_MS = 60;
-const MAX_RENDER_INTERPOLATION_DELAY_MS = 120;
-const MAX_EXTRAPOLATION_MS = 220;
+const RENDER_INTERPOLATION_DELAY_MS = 80;
+const MAX_RENDER_INTERPOLATION_DELAY_MS = 180;
+const MAX_EXTRAPOLATION_MS = 140;
 const MIN_EXTRAPOLATION_SAMPLE_MS = 12;
 const MAX_LINEAR_EXTRAPOLATION_STEP = 42;
 const MAX_ANGULAR_EXTRAPOLATION_STEP = Math.PI * 0.35;
+const MAX_EXTRAPOLATION_ALPHA = 0.65;
+const EXTRAPOLATION_ALPHA_EASING = 1.2;
 const SNAPSHOT_INTERVAL_SMOOTHING = 0.15;
 const SNAPSHOT_JITTER_SMOOTHING = 0.2;
 const NET_DEBUG_OVERLAY_DEFAULT = false;
@@ -780,7 +782,9 @@ function extrapolateSnapshot(latestSnapshot, previousSnapshot, now) {
         sampleSpan,
         snapshotTiming.intervalEwma * 0.65
     );
-    const alpha = Math.max(0, extrapolationMs / safeSampleSpan);
+    const rawAlpha = Math.max(0, extrapolationMs / safeSampleSpan);
+    const cappedAlpha = Math.min(MAX_EXTRAPOLATION_ALPHA, rawAlpha);
+    const alpha = 1 - Math.exp(-cappedAlpha * EXTRAPOLATION_ALPHA_EASING);
     netDebugStats.mode = 'extrapolate';
     netDebugStats.lastInterpolationAlpha = 0;
     netDebugStats.lastExtrapolationAlpha = alpha;
@@ -799,7 +803,11 @@ function extrapolateSnapshot(latestSnapshot, previousSnapshot, now) {
 }
 
 function getDynamicInterpolationDelayMs() {
-    const estimatedDelay = snapshotTiming.intervalEwma * 2 + snapshotTiming.jitterEwma * 2.4;
+    const lastSnapshotAgeMs = snapshotTiming.lastReceivedAt === null
+        ? 0
+        : Math.max(0, getNowMs() - snapshotTiming.lastReceivedAt);
+    const stalenessBoost = Math.max(0, lastSnapshotAgeMs - snapshotTiming.intervalEwma) * 0.45;
+    const estimatedDelay = snapshotTiming.intervalEwma * 2.35 + snapshotTiming.jitterEwma * 2.8 + stalenessBoost;
     return Math.max(RENDER_INTERPOLATION_DELAY_MS, Math.min(MAX_RENDER_INTERPOLATION_DELAY_MS, estimatedDelay));
 }
 
