@@ -149,13 +149,34 @@ const SNAPSHOT_BUFFER_SIZE = 90;
 const RENDER_INTERPOLATION_DELAY_MS = 100;
 const MAX_RENDER_INTERPOLATION_DELAY_MS = 240;
 const MAX_EXTRAPOLATION_MS = 220;
+const MAX_EXTRAPOLATION_ALPHA = 0.35;
+const MIN_EXTRAPOLATION_SAMPLE_MS = 12;
+const MAX_LINEAR_EXTRAPOLATION_STEP = 42;
+const MAX_ANGULAR_EXTRAPOLATION_STEP = Math.PI * 0.35;
 const SNAPSHOT_INTERVAL_SMOOTHING = 0.15;
 const SNAPSHOT_JITTER_SMOOTHING = 0.2;
+const NET_DEBUG_OVERLAY_DEFAULT = true;
+const NET_DEBUG_TOGGLE_KEY = 'l';
 let snapshotBuffer = [];
 let snapshotTiming = {
     lastReceivedAt: null,
     intervalEwma: 1000 / 30,
     jitterEwma: 0
+};
+let netDebugOverlayEnabled = NET_DEBUG_OVERLAY_DEFAULT;
+let netDebugOverlayElement = null;
+let renderFpsEwma = 60;
+let lastRenderLoopTimestamp = null;
+let netDebugStats = {
+    mode: 'none',
+    lastInterpolationDelayMs: RENDER_INTERPOLATION_DELAY_MS,
+    lastInterpolationAlpha: 0,
+    lastExtrapolationAlpha: 0,
+    lastExtrapolationMs: 0,
+    lastSnapshotAgeMs: 0,
+    extrapolationFrames: 0,
+    extrapolationFramesTotal: 0,
+    extrapolationWindowStartedAt: 0
 };
 let renderLoopId = null;
 let mainInitialized = false;
@@ -260,6 +281,7 @@ function main() {
     document.addEventListener('mousedown', handleMouseDown);
     document.addEventListener('mouseup', handleMouseUp);
 
+    ensureNetDebugOverlayElement();
     startRenderLoop();
 }
 
@@ -589,8 +611,18 @@ function startRenderLoop() {
         return;
     }
 
-    const step = () => {
+    const step = (timestamp) => {
         renderLoopId = requestAnimationFrame(step);
+
+        if (typeof timestamp === 'number') {
+            if (typeof lastRenderLoopTimestamp === 'number') {
+                const frameMs = Math.max(1, timestamp - lastRenderLoopTimestamp);
+                const currentFps = 1000 / frameMs;
+                renderFpsEwma = lerp(renderFpsEwma, currentFps, 0.1);
+            }
+            lastRenderLoopTimestamp = timestamp;
+        }
+
         if (!gameActive) {
             return;
         }
@@ -631,6 +663,7 @@ function pushStateSnapshot(state, frameNumber = null) {
         snapshotTiming.jitterEwma = lerp(snapshotTiming.jitterEwma, intervalDelta, SNAPSHOT_JITTER_SMOOTHING);
     }
     snapshotTiming.lastReceivedAt = receivedAt;
+    netDebugStats.lastSnapshotAgeMs = 0;
 
     snapshotBuffer.push({
         frameNumber: typeof frameNumber === 'number' ? frameNumber : null,
@@ -652,7 +685,17 @@ function getInterpolatedRenderState() {
     }
 
     const now = getNowMs();
-    const targetTime = now - getDynamicInterpolationDelayMs();
+    if (!netDebugStats.extrapolationWindowStartedAt) {
+        netDebugStats.extrapolationWindowStartedAt = now;
+    } else if (now - netDebugStats.extrapolationWindowStartedAt >= 1000) {
+        netDebugStats.extrapolationFrames = 0;
+        netDebugStats.extrapolationWindowStartedAt = now;
+    }
+
+    const interpolationDelay = getDynamicInterpolationDelayMs();
+    netDebugStats.lastInterpolationDelayMs = interpolationDelay;
+    netDebugStats.lastSnapshotAgeMs = Math.max(0, now - snapshotBuffer[snapshotBuffer.length - 1].receivedAt);
+    const targetTime = now - interpolationDelay;
 
     let newerIndex = -1;
     for (let i = 0; i < snapshotBuffer.length; i++) {
@@ -663,6 +706,10 @@ function getInterpolatedRenderState() {
     }
 
     if (newerIndex === 0) {
+        netDebugStats.mode = 'hold';
+        netDebugStats.lastInterpolationAlpha = 0;
+        netDebugStats.lastExtrapolationAlpha = 0;
+        netDebugStats.lastExtrapolationMs = 0;
         return cloneStateSnapshot(snapshotBuffer[0].state);
     }
 
@@ -674,6 +721,9 @@ function getInterpolatedRenderState() {
 
     const newer = snapshotBuffer[newerIndex];
     const older = snapshotBuffer[newerIndex - 1];
+    netDebugStats.mode = 'interpolate';
+    netDebugStats.lastExtrapolationAlpha = 0;
+    netDebugStats.lastExtrapolationMs = 0;
     return interpolateSnapshots(older, newer, targetTime);
 }
 
@@ -682,6 +732,7 @@ function interpolateSnapshots(olderSnapshot, newerSnapshot, targetTime) {
     const newerTime = newerSnapshot.receivedAt;
     const timeSpan = Math.max(1, newerTime - olderTime);
     const alpha = Math.max(0, Math.min(1, (targetTime - olderTime) / timeSpan));
+    netDebugStats.lastInterpolationAlpha = alpha;
 
     const olderState = olderSnapshot.state;
     const newerState = newerSnapshot.state;
@@ -709,7 +760,18 @@ function extrapolateSnapshot(latestSnapshot, previousSnapshot, now) {
         Math.max(90, snapshotTiming.intervalEwma * 2.5 + snapshotTiming.jitterEwma * 1.8)
     );
     const extrapolationMs = Math.max(0, Math.min(dynamicExtrapolationCap, now - latestSnapshot.receivedAt));
-    const alpha = extrapolationMs / sampleSpan;
+    const safeSampleSpan = Math.max(
+        MIN_EXTRAPOLATION_SAMPLE_MS,
+        sampleSpan,
+        snapshotTiming.intervalEwma * 0.65
+    );
+    const alpha = Math.max(0, Math.min(MAX_EXTRAPOLATION_ALPHA, extrapolationMs / safeSampleSpan));
+    netDebugStats.mode = 'extrapolate';
+    netDebugStats.lastInterpolationAlpha = 0;
+    netDebugStats.lastExtrapolationAlpha = alpha;
+    netDebugStats.lastExtrapolationMs = extrapolationMs;
+    netDebugStats.extrapolationFrames += 1;
+    netDebugStats.extrapolationFramesTotal += 1;
     const latestState = cloneStateSnapshot(latestSnapshot.state);
     const previousState = previousSnapshot.state;
 
@@ -763,13 +825,15 @@ function extrapolateEntities(previousEntities = [], latestEntities = [], alpha =
         for (const key of linearKeys) {
             if (typeof previousEntity[key] === 'number' && typeof latestEntity[key] === 'number') {
                 const velocity = latestEntity[key] - previousEntity[key];
-                projected[key] = latestEntity[key] + velocity * alpha;
+                const projectedDelta = clamp(velocity * alpha, -MAX_LINEAR_EXTRAPOLATION_STEP, MAX_LINEAR_EXTRAPOLATION_STEP);
+                projected[key] = latestEntity[key] + projectedDelta;
             }
         }
         for (const key of angularKeys) {
             if (typeof previousEntity[key] === 'number' && typeof latestEntity[key] === 'number') {
                 const delta = shortestAngleDelta(previousEntity[key], latestEntity[key]);
-                projected[key] = latestEntity[key] + delta * alpha;
+                const projectedDelta = clamp(delta * alpha, -MAX_ANGULAR_EXTRAPOLATION_STEP, MAX_ANGULAR_EXTRAPOLATION_STEP);
+                projected[key] = latestEntity[key] + projectedDelta;
             }
         }
         return projected;
@@ -782,6 +846,10 @@ function lerp(start, end, alpha) {
 
 function lerpAngle(start, end, alpha) {
     return start + shortestAngleDelta(start, end) * alpha;
+}
+
+function clamp(value, minValue, maxValue) {
+    return Math.max(minValue, Math.min(maxValue, value));
 }
 
 function shortestAngleDelta(start, end) {
@@ -1097,6 +1165,66 @@ function draw(gameState) {
     drawCombatTexts();
     
    ctx.restore();
+
+    drawNetworkDebugOverlay();
+}
+
+function drawNetworkDebugOverlay() {
+    ensureNetDebugOverlayElement();
+    if (!netDebugOverlayElement) {
+        return;
+    }
+
+    if (!netDebugOverlayEnabled) {
+        netDebugOverlayElement.style.display = 'none';
+        return;
+    }
+
+    const snapshotHz = 1000 / Math.max(1, snapshotTiming.intervalEwma);
+    const lines = [
+        `mode: ${netDebugStats.mode}`,
+        `render fps: ${renderFpsEwma.toFixed(1)}`,
+        `snapshot hz: ${snapshotHz.toFixed(1)}`,
+        `snapshot interval: ${snapshotTiming.intervalEwma.toFixed(1)} ms`,
+        `jitter: ${snapshotTiming.jitterEwma.toFixed(1)} ms`,
+        `interp delay: ${netDebugStats.lastInterpolationDelayMs.toFixed(1)} ms`,
+        `interp alpha: ${netDebugStats.lastInterpolationAlpha.toFixed(2)}`,
+        `snapshot age: ${netDebugStats.lastSnapshotAgeMs.toFixed(1)} ms`,
+        `extrap ms: ${netDebugStats.lastExtrapolationMs.toFixed(1)} ms`,
+        `extrap alpha: ${netDebugStats.lastExtrapolationAlpha.toFixed(2)}`,
+        `extrap frames: ${netDebugStats.extrapolationFrames}`,
+        `extrap total: ${netDebugStats.extrapolationFramesTotal}`,
+        `buffer: ${snapshotBuffer.length}`
+    ];
+
+    netDebugOverlayElement.style.display = 'block';
+    netDebugOverlayElement.textContent = lines.join('\n');
+}
+
+function ensureNetDebugOverlayElement() {
+    if (netDebugOverlayElement || typeof document === 'undefined') {
+        return;
+    }
+
+    const el = document.createElement('pre');
+    el.id = 'netDebugOverlay';
+    el.style.position = 'fixed';
+    el.style.top = '12px';
+    el.style.left = '12px';
+    el.style.zIndex = '9999';
+    el.style.margin = '0';
+    el.style.padding = '8px';
+    el.style.minWidth = '240px';
+    el.style.whiteSpace = 'pre';
+    el.style.pointerEvents = 'none';
+    el.style.borderRadius = '6px';
+    el.style.background = 'rgba(7, 12, 20, 0.86)';
+    el.style.color = '#b8f7ff';
+    el.style.font = '12px monospace';
+    el.style.lineHeight = '1.25';
+    el.style.display = netDebugOverlayEnabled ? 'block' : 'none';
+    document.body.appendChild(el);
+    netDebugOverlayElement = el;
 }
 
 function drawMapBackground(cameraX, cameraY) {
@@ -1726,6 +1854,12 @@ function startFreeForAll() {
 }
 
 function handleKeyDown(event) {
+    const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
+    if (key === NET_DEBUG_TOGGLE_KEY || event.code === 'KeyL') {
+        event.preventDefault();
+        netDebugOverlayEnabled = !netDebugOverlayEnabled;
+        return;
+    }
     socket.emit('keydown', event.keyCode);
 }
 

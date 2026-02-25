@@ -26,7 +26,7 @@ class GrenadeProjectile {
         this.minAngularSpeed = options.minAngularSpeed || 0.01;
         this.stationaryFuse = options.stationaryFuse || 35;
         this.stationaryTimer = 0;
-        this.lifetime = options.lifetime || 170;
+        this.lifetime = options.lifetime || 120;
         this.age = 0;
 
         this.explosionRadius = options.explosionRadius || 175;
