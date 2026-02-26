@@ -396,8 +396,6 @@
             box-sizing: border-box;
             position: relative;
             z-index: 2;
-            max-height: 96vh;
-            overflow-y: auto;
         }
 
         #menu {
@@ -410,6 +408,12 @@
             overflow-x: hidden;
             overflow-y: auto;
             height: 96.7vh;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+
+        #menu::-webkit-scrollbar {
+            display: none;
         }
 
         #menu::before {
@@ -431,7 +435,6 @@
             max-width: 560px;
             width: min(94vw, 560px);
             padding: 44px 28px;
-            max-height: 94vh;
         }
         
         #characterMenu, #searchingMenu, #controlsMenu {
@@ -734,10 +737,7 @@
         }
 
         .character-actions {
-            position: sticky;
-            bottom: 0;
             padding-top: 12px;
-            background: linear-gradient(to top, rgba(18, 52, 78, 0.9), rgba(18, 52, 78, 0));
         }
 
         .match-end-overlay {
@@ -963,7 +963,7 @@
             100% { transform: translate3d(2%, 2%, 0) scale(1.05); }
         }
 
-        @media (max-width: 640px) {
+        @media (hover: none) and (pointer: coarse) and (max-width: 640px) {
             body {
                 overflow-y: auto;
                 align-items: flex-start;
@@ -977,6 +977,15 @@
                 padding: 42px 20px;
                 max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)));
                 overflow-y: auto;
+            }
+
+            #menu {
+                scrollbar-width: thin;
+                -ms-overflow-style: auto;
+            }
+
+            #menu::-webkit-scrollbar {
+                display: block;
             }
 
             #menu {
@@ -1019,9 +1028,15 @@
                 height: 46px;
                 font-size: 15px;
             }
+
+            .character-actions {
+                position: sticky;
+                bottom: 0;
+                background: linear-gradient(to top, rgba(18, 52, 78, 0.9), rgba(18, 52, 78, 0));
+            }
         }
 
-        @media (max-height: 820px) {
+        @media (hover: none) and (pointer: coarse) and (max-height: 820px) {
             #menu, #characterMenu, #searchingMenu, #controlsMenu {
                 max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)));
                 padding: 28px 16px;
