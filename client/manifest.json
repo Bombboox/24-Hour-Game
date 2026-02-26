@@ -1,0 +1,22 @@
+{
+    "name": "Boox Shoot",
+    "short_name": "Boox",
+    "start_url": "/",
+    "display": "standalone",
+    "orientation": "landscape",
+    "background_color": "#000000",
+    "theme_color": "#000000",
+    "description": "Top down 2d shooter.",
+    "icons": [
+      {
+        "src": "/sprites/reaver.png",
+        "sizes": "200x200",
+        "type": "image/png"
+      },
+      {
+        "src": "/sprites/demo.png",
+        "sizes": "200x200",
+        "type": "image/png"
+      }
+    ]
+  }

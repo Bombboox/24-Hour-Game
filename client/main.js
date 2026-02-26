@@ -33,6 +33,18 @@ const matchEndScore = document.getElementById("matchEndScore");
 const secondaryWeaponName = document.getElementById("secondaryWeaponName");
 const patchNotesList = document.getElementById("patchNotesList");
 const patchNotesVersion = document.getElementById("patchNotesVersion");
+const installButton = document.getElementById("installButton");
+const mobileHud = document.getElementById("mobileHud");
+const moveStick = document.getElementById("moveStick");
+const moveStickKnob = document.getElementById("moveStickKnob");
+const aimStick = document.getElementById("aimStick");
+const aimStickKnob = document.getElementById("aimStickKnob");
+const mobileFireButton = document.getElementById("mobileFireButton");
+const mobileReloadButton = document.getElementById("mobileReloadButton");
+const mobileSwapButton = document.getElementById("mobileSwapButton");
+const mobileAbilityButton = document.getElementById("mobileAbilityButton");
+const mobileSharedButton = document.getElementById("mobileSharedButton");
+const mobilePassiveButton = document.getElementById("mobilePassiveButton");
 
 const MAP_COLOR = "#d3d3d3";
 const GRID_MINOR_SIZE = 35;
@@ -227,6 +239,31 @@ let menuBackdropActors = [];
 let menuBackdropAnimationId = null;
 let menuBackdropLastTime = 0;
 let menuBackdropLastDrawTime = 0;
+let deferredInstallPrompt = null;
+const MOBILE_INPUT_KEYS = {
+    up: 87,
+    down: 83,
+    left: 65,
+    right: 68,
+    reload: 82,
+    swap: 81,
+    ability: 69,
+    shared: 67,
+    passive: 90
+};
+const virtualPressedKeys = new Set();
+const isTouchDevice = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+const mobileControlState = {
+    movePointerId: null,
+    aimPointerId: null,
+    firePressed: false,
+    movementDirections: {
+        up: false,
+        down: false,
+        left: false,
+        right: false
+    }
+};
 
 let playerSettings = loadCharacterSettings();
 const VALID_CHARACTERS = ['berserker', 'ninja', 'king', 'demoman', 'reaver'];
@@ -238,6 +275,9 @@ let lastAutoAdjustedSecondary = null;
 
 renderPatchNotes();
 initializeMenuBackdrop();
+registerServiceWorker();
+setupPwaInstallButton();
+setupMobileControls();
 
 function sanitizePlayerSettings(settings) {
     const characterType = VALID_CHARACTERS.includes(settings?.characterType) ? settings.characterType : 'berserker';
@@ -262,6 +302,323 @@ function sanitizePlayerSettings(settings) {
     };
 }
 
+function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) {
+        return;
+    }
+
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(() => {
+            // Non-blocking: game should still run if service worker registration fails.
+        });
+    });
+}
+
+function setupPwaInstallButton() {
+    if (!installButton) {
+        return;
+    }
+
+    installButton.addEventListener('click', async () => {
+        if (!deferredInstallPrompt) {
+            return;
+        }
+
+        deferredInstallPrompt.prompt();
+        try {
+            await deferredInstallPrompt.userChoice;
+        } finally {
+            deferredInstallPrompt = null;
+            installButton.style.display = 'none';
+        }
+    });
+
+    window.addEventListener('beforeinstallprompt', (event) => {
+        event.preventDefault();
+        deferredInstallPrompt = event;
+        installButton.style.display = 'block';
+    });
+
+    window.addEventListener('appinstalled', () => {
+        deferredInstallPrompt = null;
+        installButton.style.display = 'none';
+        Toastify({
+            text: 'App installed successfully.',
+            duration: 2200,
+            gravity: "top",
+            position: "right"
+        }).showToast();
+    });
+}
+
+function setupMobileControls() {
+    if (!isTouchDevice || !mobileHud) {
+        return;
+    }
+
+    setupMovementStick();
+    setupAimStick();
+    setupMobileActionButtons();
+    updateMobileHudVisibility();
+}
+
+function setupMovementStick() {
+    if (!moveStick || !moveStickKnob) {
+        return;
+    }
+
+    const release = () => {
+        mobileControlState.movePointerId = null;
+        setMovementDirection('up', false);
+        setMovementDirection('down', false);
+        setMovementDirection('left', false);
+        setMovementDirection('right', false);
+        positionStickKnob(moveStickKnob, 0, 0);
+    };
+
+    const updateFromEvent = (event) => {
+        const rect = moveStick.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const dx = event.clientX - centerX;
+        const dy = event.clientY - centerY;
+        const maxDistance = rect.width * 0.34;
+        const distance = Math.hypot(dx, dy);
+        const scale = distance > maxDistance && distance > 0 ? maxDistance / distance : 1;
+        const clampedX = dx * scale;
+        const clampedY = dy * scale;
+        const normalizedX = clampedX / maxDistance;
+        const normalizedY = clampedY / maxDistance;
+        const threshold = 0.34;
+
+        positionStickKnob(moveStickKnob, clampedX, clampedY);
+        setMovementDirection('left', normalizedX < -threshold);
+        setMovementDirection('right', normalizedX > threshold);
+        setMovementDirection('up', normalizedY < -threshold);
+        setMovementDirection('down', normalizedY > threshold);
+    };
+
+    moveStick.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        mobileControlState.movePointerId = event.pointerId;
+        moveStick.setPointerCapture(event.pointerId);
+        updateFromEvent(event);
+    });
+
+    moveStick.addEventListener('pointermove', (event) => {
+        if (event.pointerId !== mobileControlState.movePointerId) {
+            return;
+        }
+        event.preventDefault();
+        updateFromEvent(event);
+    });
+
+    moveStick.addEventListener('pointerup', (event) => {
+        if (event.pointerId !== mobileControlState.movePointerId) {
+            return;
+        }
+        event.preventDefault();
+        release();
+    });
+
+    moveStick.addEventListener('pointercancel', (event) => {
+        if (event.pointerId !== mobileControlState.movePointerId) {
+            return;
+        }
+        event.preventDefault();
+        release();
+    });
+}
+
+function setupAimStick() {
+    if (!aimStick || !aimStickKnob) {
+        return;
+    }
+
+    const release = () => {
+        mobileControlState.aimPointerId = null;
+        positionStickKnob(aimStickKnob, 0, 0);
+    };
+
+    const updateFromEvent = (event) => {
+        const rect = aimStick.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const dx = event.clientX - centerX;
+        const dy = event.clientY - centerY;
+        const maxDistance = rect.width * 0.34;
+        const distance = Math.hypot(dx, dy);
+        const scale = distance > maxDistance && distance > 0 ? maxDistance / distance : 1;
+        const clampedX = dx * scale;
+        const clampedY = dy * scale;
+        positionStickKnob(aimStickKnob, clampedX, clampedY);
+
+        if (Math.hypot(clampedX, clampedY) > 5) {
+            const angle = Math.atan2(clampedY, clampedX);
+            localAimAngle = angle;
+            socket.emit('changeAngle', angle);
+        }
+    };
+
+    aimStick.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        mobileControlState.aimPointerId = event.pointerId;
+        aimStick.setPointerCapture(event.pointerId);
+        updateFromEvent(event);
+    });
+
+    aimStick.addEventListener('pointermove', (event) => {
+        if (event.pointerId !== mobileControlState.aimPointerId) {
+            return;
+        }
+        event.preventDefault();
+        updateFromEvent(event);
+    });
+
+    aimStick.addEventListener('pointerup', (event) => {
+        if (event.pointerId !== mobileControlState.aimPointerId) {
+            return;
+        }
+        event.preventDefault();
+        release();
+    });
+
+    aimStick.addEventListener('pointercancel', (event) => {
+        if (event.pointerId !== mobileControlState.aimPointerId) {
+            return;
+        }
+        event.preventDefault();
+        release();
+    });
+}
+
+function setupMobileActionButtons() {
+    bindMobileHoldButton(mobileFireButton, () => {
+        if (mobileControlState.firePressed) {
+            return;
+        }
+        mobileControlState.firePressed = true;
+        socket.emit('mouseDown', 0);
+    }, () => {
+        if (!mobileControlState.firePressed) {
+            return;
+        }
+        mobileControlState.firePressed = false;
+        socket.emit('mouseUp', 0);
+    });
+
+    bindMobileTapButton(mobileReloadButton, MOBILE_INPUT_KEYS.reload);
+    bindMobileTapButton(mobileSwapButton, MOBILE_INPUT_KEYS.swap);
+    bindMobileTapButton(mobileAbilityButton, MOBILE_INPUT_KEYS.ability);
+    bindMobileTapButton(mobileSharedButton, MOBILE_INPUT_KEYS.shared);
+    bindMobileTapButton(mobilePassiveButton, MOBILE_INPUT_KEYS.passive);
+}
+
+function bindMobileTapButton(button, keyCode) {
+    if (!button) {
+        return;
+    }
+
+    button.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        emitVirtualKeyTap(keyCode);
+    });
+}
+
+function bindMobileHoldButton(button, onPress, onRelease) {
+    if (!button) {
+        return;
+    }
+
+    let pointerId = null;
+    const release = (event) => {
+        if (pointerId === null || event.pointerId !== pointerId) {
+            return;
+        }
+        event.preventDefault();
+        pointerId = null;
+        onRelease();
+    };
+
+    button.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        pointerId = event.pointerId;
+        button.setPointerCapture(event.pointerId);
+        onPress();
+    });
+
+    button.addEventListener('pointerup', release);
+    button.addEventListener('pointercancel', release);
+}
+
+function positionStickKnob(knob, x, y) {
+    if (!knob) {
+        return;
+    }
+    knob.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+}
+
+function setMovementDirection(direction, pressed) {
+    if (mobileControlState.movementDirections[direction] === pressed) {
+        return;
+    }
+    mobileControlState.movementDirections[direction] = pressed;
+    setVirtualKey(MOBILE_INPUT_KEYS[direction], pressed);
+}
+
+function emitVirtualKeyTap(keyCode) {
+    setVirtualKey(keyCode, true);
+    window.setTimeout(() => setVirtualKey(keyCode, false), 70);
+}
+
+function setVirtualKey(keyCode, pressed) {
+    if (pressed) {
+        if (virtualPressedKeys.has(keyCode)) {
+            return;
+        }
+        virtualPressedKeys.add(keyCode);
+        updateLocalInputState(keyCode, true);
+        socket.emit('keydown', keyCode);
+        return;
+    }
+
+    if (!virtualPressedKeys.has(keyCode)) {
+        return;
+    }
+    virtualPressedKeys.delete(keyCode);
+    updateLocalInputState(keyCode, false);
+    socket.emit('keyup', keyCode);
+}
+
+function clearVirtualControls() {
+    for (const keyCode of Array.from(virtualPressedKeys)) {
+        setVirtualKey(keyCode, false);
+    }
+
+    if (mobileControlState.firePressed) {
+        mobileControlState.firePressed = false;
+        socket.emit('mouseUp', 0);
+    }
+
+    positionStickKnob(moveStickKnob, 0, 0);
+    positionStickKnob(aimStickKnob, 0, 0);
+    mobileControlState.movePointerId = null;
+    mobileControlState.aimPointerId = null;
+    mobileControlState.movementDirections.up = false;
+    mobileControlState.movementDirections.down = false;
+    mobileControlState.movementDirections.left = false;
+    mobileControlState.movementDirections.right = false;
+}
+
+function updateMobileHudVisibility() {
+    if (!mobileHud) {
+        return;
+    }
+
+    const visible = isTouchDevice && gameActive;
+    mobileHud.style.display = visible ? 'block' : 'none';
+}
+
 function main() {
     if (mainInitialized) {
         return;
@@ -276,6 +633,7 @@ function main() {
         hideAllMenus();
         gameScreen.style.display = 'flex';
         gameActive = true;
+        updateMobileHudVisibility();
         matchEndOverlay.classList.remove('show');
         matchEndCard.classList.remove('victory', 'defeat');
         scorePopupShownAt = Date.now();
@@ -325,6 +683,8 @@ function showMainMenu() {
         menuLink.style.display = 'flex';
     }
     gameActive = false;
+    clearVirtualControls();
+    updateMobileHudVisibility();
     gameMode = '1v1';
     soundManager.stop('laser');
     matchEndOverlay.classList.remove('show');
@@ -599,6 +959,7 @@ function save() {
 function cancelSearch() {
     // Cancel any ongoing search
     socket.emit('cancelSearch');
+    clearVirtualControls();
     showMainMenu();
 }
 

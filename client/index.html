@@ -6,6 +6,9 @@
     <title>Boox Shoot</title>
     <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css">
     <link rel="icon" type="image/png" href="sprites/ninja.ico">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#000000">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <style>
         @font-face {
             font-family: 'CustomFont';
@@ -83,6 +86,7 @@
             justify-content: center;
             position: relative;
             z-index: 4;
+            touch-action: none;
         }
         
         #canvas {
@@ -591,6 +595,10 @@
             margin-bottom: 0;
         }
 
+        #installButton {
+            display: none;
+        }
+
         .menu-link {
             position: fixed;
             top: 18px;
@@ -767,6 +775,83 @@
             letter-spacing: 0.6px;
             text-transform: uppercase;
         }
+
+        .mobile-hud {
+            position: absolute;
+            inset: 0;
+            z-index: 220;
+            pointer-events: none;
+            display: none;
+            touch-action: none;
+        }
+
+        .mobile-stick {
+            position: absolute;
+            width: 138px;
+            height: 138px;
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.38);
+            background: rgba(0, 0, 0, 0.25);
+            backdrop-filter: blur(3px);
+            pointer-events: auto;
+            touch-action: none;
+        }
+
+        .mobile-stick-knob {
+            position: absolute;
+            width: 54px;
+            height: 54px;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.72);
+            background: rgba(255, 255, 255, 0.28);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.34);
+            pointer-events: none;
+        }
+
+        .mobile-stick-left {
+            left: 18px;
+            bottom: 18px;
+        }
+
+        .mobile-stick-right {
+            right: 18px;
+            bottom: 18px;
+        }
+
+        .mobile-actions {
+            position: absolute;
+            right: 18px;
+            top: 16px;
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+            width: min(42vw, 220px);
+            pointer-events: auto;
+            touch-action: manipulation;
+        }
+
+        .mobile-action-button {
+            padding: 10px 4px;
+            border: 1px solid rgba(255, 255, 255, 0.42);
+            border-radius: 10px;
+            background: rgba(8, 25, 40, 0.8);
+            color: #ffffff;
+            font-family: 'CustomFont', 'Arial', sans-serif;
+            font-size: 11px;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+        }
+
+        .mobile-fire-button {
+            background: rgba(170, 30, 30, 0.88);
+            border-color: rgba(255, 180, 180, 0.62);
+        }
         
         .searching-text {
             color: white;
@@ -841,6 +926,16 @@
                 width: 44px;
                 height: 44px;
             }
+
+            .mobile-stick {
+                width: 128px;
+                height: 128px;
+            }
+
+            .mobile-stick-knob {
+                width: 48px;
+                height: 48px;
+            }
         }
     </style>
 </head>
@@ -858,6 +953,7 @@
         <button class="menu-button ffa-button" onclick="startFreeForAll()">Free For All</button>
         <button class="menu-button character-button" onclick="showCharacter()">Character</button>
         <button class="menu-button" onclick="showControls()">Controls</button>
+        <button id="installButton" class="menu-button">Install App</button>
         <div class="patch-notes-card">
             <div class="patch-notes-header">
                 <span>Patch Notes</span>
@@ -958,6 +1054,10 @@
                 <div class="control-key">Z</div>
                 <div class="control-action">Toggle Passive (King) / Detonate (Demoman)</div>
             </div>
+            <div class="control-row">
+                <div class="control-key">Mobile</div>
+                <div class="control-action">Left stick move, right stick aim, on-screen action buttons</div>
+            </div>
         </div>
         <button class="menu-button cancel-button" onclick="showMainMenu()">Back</button>
     </div>
@@ -1008,6 +1108,22 @@
                 <div class="match-end-title" id="matchEndTitle">Victory</div>
                 <div class="match-end-score" id="matchEndScore">5 - 3</div>
                 <div class="match-end-subtitle">Returning to menu...</div>
+            </div>
+        </div>
+        <div id="mobileHud" class="mobile-hud">
+            <div id="moveStick" class="mobile-stick mobile-stick-left">
+                <div id="moveStickKnob" class="mobile-stick-knob"></div>
+            </div>
+            <div id="aimStick" class="mobile-stick mobile-stick-right">
+                <div id="aimStickKnob" class="mobile-stick-knob"></div>
+            </div>
+            <div class="mobile-actions">
+                <button id="mobileFireButton" class="mobile-action-button mobile-fire-button">Fire</button>
+                <button id="mobileReloadButton" class="mobile-action-button">Reload</button>
+                <button id="mobileSwapButton" class="mobile-action-button">Swap</button>
+                <button id="mobileAbilityButton" class="mobile-action-button">Ability</button>
+                <button id="mobileSharedButton" class="mobile-action-button">Shared</button>
+                <button id="mobilePassiveButton" class="mobile-action-button">Passive</button>
             </div>
         </div>
         <canvas id="canvas"></canvas>
