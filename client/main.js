@@ -39,7 +39,6 @@ const moveStick = document.getElementById("moveStick");
 const moveStickKnob = document.getElementById("moveStickKnob");
 const aimStick = document.getElementById("aimStick");
 const aimStickKnob = document.getElementById("aimStickKnob");
-const mobileFireButton = document.getElementById("mobileFireButton");
 const mobileReloadButton = document.getElementById("mobileReloadButton");
 const mobileSwapButton = document.getElementById("mobileSwapButton");
 const mobileAbilityButton = document.getElementById("mobileAbilityButton");
@@ -440,6 +439,7 @@ function setupAimStick() {
     const release = () => {
         mobileControlState.aimPointerId = null;
         positionStickKnob(aimStickKnob, 0, 0);
+        stopMobileFire();
     };
 
     const updateFromEvent = (event) => {
@@ -466,6 +466,7 @@ function setupAimStick() {
         event.preventDefault();
         mobileControlState.aimPointerId = event.pointerId;
         aimStick.setPointerCapture(event.pointerId);
+        startMobileFire();
         updateFromEvent(event);
     });
 
@@ -495,25 +496,27 @@ function setupAimStick() {
 }
 
 function setupMobileActionButtons() {
-    bindMobileHoldButton(mobileFireButton, () => {
-        if (mobileControlState.firePressed) {
-            return;
-        }
-        mobileControlState.firePressed = true;
-        socket.emit('mouseDown', 0);
-    }, () => {
-        if (!mobileControlState.firePressed) {
-            return;
-        }
-        mobileControlState.firePressed = false;
-        socket.emit('mouseUp', 0);
-    });
+    bindMobileHoldKeyButton(mobileReloadButton, MOBILE_INPUT_KEYS.reload);
+    bindMobileHoldKeyButton(mobileSwapButton, MOBILE_INPUT_KEYS.swap);
+    bindMobileHoldKeyButton(mobileAbilityButton, MOBILE_INPUT_KEYS.ability);
+    bindMobileHoldKeyButton(mobileSharedButton, MOBILE_INPUT_KEYS.shared);
+    bindMobileHoldKeyButton(mobilePassiveButton, MOBILE_INPUT_KEYS.passive);
+}
 
-    bindMobileTapButton(mobileReloadButton, MOBILE_INPUT_KEYS.reload);
-    bindMobileTapButton(mobileSwapButton, MOBILE_INPUT_KEYS.swap);
-    bindMobileTapButton(mobileAbilityButton, MOBILE_INPUT_KEYS.ability);
-    bindMobileTapButton(mobileSharedButton, MOBILE_INPUT_KEYS.shared);
-    bindMobileTapButton(mobilePassiveButton, MOBILE_INPUT_KEYS.passive);
+function startMobileFire() {
+    if (mobileControlState.firePressed) {
+        return;
+    }
+    mobileControlState.firePressed = true;
+    socket.emit('mouseDown', 0);
+}
+
+function stopMobileFire() {
+    if (!mobileControlState.firePressed) {
+        return;
+    }
+    mobileControlState.firePressed = false;
+    socket.emit('mouseUp', 0);
 }
 
 function setupMobileQuitButton() {
@@ -538,38 +541,31 @@ function setupMobileQuitButton() {
     });
 }
 
-function bindMobileTapButton(button, keyCode) {
-    if (!button) {
-        return;
-    }
-
-    button.addEventListener('pointerdown', (event) => {
-        event.preventDefault();
-        emitVirtualKeyTap(keyCode);
-    });
-}
-
-function bindMobileHoldButton(button, onPress, onRelease) {
+function bindMobileHoldKeyButton(button, keyCode) {
     if (!button) {
         return;
     }
 
     let pointerId = null;
+
+    button.addEventListener('pointerdown', (event) => {
+        if (pointerId !== null) {
+            return;
+        }
+        event.preventDefault();
+        pointerId = event.pointerId;
+        button.setPointerCapture(event.pointerId);
+        setVirtualKey(keyCode, true);
+    });
+
     const release = (event) => {
         if (pointerId === null || event.pointerId !== pointerId) {
             return;
         }
         event.preventDefault();
         pointerId = null;
-        onRelease();
+        setVirtualKey(keyCode, false);
     };
-
-    button.addEventListener('pointerdown', (event) => {
-        event.preventDefault();
-        pointerId = event.pointerId;
-        button.setPointerCapture(event.pointerId);
-        onPress();
-    });
 
     button.addEventListener('pointerup', release);
     button.addEventListener('pointercancel', release);
@@ -588,11 +584,6 @@ function setMovementDirection(direction, pressed) {
     }
     mobileControlState.movementDirections[direction] = pressed;
     setVirtualKey(MOBILE_INPUT_KEYS[direction], pressed);
-}
-
-function emitVirtualKeyTap(keyCode) {
-    setVirtualKey(keyCode, true);
-    window.setTimeout(() => setVirtualKey(keyCode, false), 70);
 }
 
 function setVirtualKey(keyCode, pressed) {
@@ -619,10 +610,7 @@ function clearVirtualControls() {
         setVirtualKey(keyCode, false);
     }
 
-    if (mobileControlState.firePressed) {
-        mobileControlState.firePressed = false;
-        socket.emit('mouseUp', 0);
-    }
+    stopMobileFire();
 
     positionStickKnob(moveStickKnob, 0, 0);
     positionStickKnob(aimStickKnob, 0, 0);

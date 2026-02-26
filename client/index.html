@@ -407,7 +407,7 @@
             animation: menuPulse 3.5s ease-in-out infinite;
             overflow-x: hidden;
             overflow-y: hidden;
-            height: 96.7%;
+            height: 96.7vh;
             scrollbar-width: none;
             -ms-overflow-style: none;
         }
@@ -798,8 +798,8 @@
 
         .mobile-stick {
             position: absolute;
-            width: 138px;
-            height: 138px;
+            width: 120px;
+            height: 120px;
             border-radius: 50%;
             border: 2px solid rgba(255, 255, 255, 0.38);
             background: rgba(0, 0, 0, 0.25);
@@ -810,8 +810,8 @@
 
         .mobile-stick-knob {
             position: absolute;
-            width: 54px;
-            height: 54px;
+            width: 46px;
+            height: 46px;
             left: 50%;
             top: 50%;
             transform: translate(-50%, -50%);
@@ -836,8 +836,8 @@
             position: absolute;
             right: 18px;
             bottom: 18px;
-            width: 138px;
-            height: 138px;
+            width: 120px;
+            height: 120px;
             pointer-events: none;
         }
 
@@ -868,35 +868,21 @@
             box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
         }
 
-<<<<<<< HEAD
-        .mobile-arc-z { --arc-angle: -14deg; --arc-radius: 104px; }
-        .mobile-arc-q { --arc-angle: -110deg; --arc-radius: 103px; }
-        .mobile-arc-r { --arc-angle: -86deg; --arc-radius: 106px; }
-        .mobile-arc-e { --arc-angle: -62deg; --arc-radius: 109px; }
-        .mobile-arc-c { --arc-angle: -38deg; --arc-radius: 108px; }
-=======
-        .mobile-arc-fire {
-            background: rgba(170, 30, 30, 0.88);
-            border-color: rgba(255, 180, 180, 0.62);
-        }
-
-        .mobile-arc-q { --arc-angle: -140deg; --arc-radius: 100px; }
-        .mobile-arc-r { --arc-angle: -112deg; --arc-radius: 102px; }
-        .mobile-arc-e { --arc-angle: -84deg; --arc-radius: 104px; }
-        .mobile-arc-c { --arc-angle: -56deg; --arc-radius: 102px; }
-        .mobile-arc-z { --arc-angle: -28deg; --arc-radius: 100px; }
-        .mobile-arc-fire { --arc-angle: -166deg; --arc-radius: 92px; }
->>>>>>> parent of 43845ba (removed redundant buttons on mobile, misc bug fixes)
+        .mobile-arc-q { --arc-angle: -90deg; --arc-radius: 92px; }
+        .mobile-arc-r { --arc-angle: -66deg; --arc-radius: 94px; }
+        .mobile-arc-e { --arc-angle: -42deg; --arc-radius: 96px; }
+        .mobile-arc-c { --arc-angle: -18deg; --arc-radius: 95px; }
+        .mobile-arc-z { --arc-angle: 6deg; --arc-radius: 93px; }
 
         .mobile-quit-button {
             position: absolute;
-            left: 14px;
-            top: 14px;
+            left: max(12px, env(safe-area-inset-left));
+            top: max(12px, env(safe-area-inset-top));
             min-width: 76px;
-            height: 38px;
+            height: 40px;
             border: 2px solid rgba(255, 255, 255, 0.5);
             border-radius: 999px;
-            background: rgba(170, 30, 30, 0.9);
+            background: linear-gradient(45deg, rgba(202, 58, 58, 0.94), rgba(141, 22, 22, 0.95));
             color: #ffffff;
             font-family: 'CustomFont', 'Arial', sans-serif;
             font-size: 14px;
@@ -967,7 +953,7 @@
 
         @media (hover: none) and (pointer: coarse) {
             body {
-                overflow-y: auto;
+                overflow: hidden;
                 align-items: flex-start;
                 justify-content: center;
                 padding-top: max(8px, env(safe-area-inset-top));
@@ -978,7 +964,7 @@
                 width: min(94vw, 400px);
                 padding: 42px 20px;
                 max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)));
-                overflow-y: auto;
+                overflow-y: hidden;
             }
 
             #characterMenu {
@@ -997,20 +983,36 @@
             }
 
             #characterMenu .equip-grid {
-                grid-template-columns: 1fr;
-            }
-
-            #menu {
-                scrollbar-width: thin;
-                -ms-overflow-style: auto;
-            }
-
-            #menu::-webkit-scrollbar {
-                display: block;
+                grid-template-columns: repeat(2, 1fr);
             }
 
             #menu {
                 height: auto;
+            }
+
+            #controlsMenu {
+                position: fixed;
+                left: 3vw;
+                right: 3vw;
+                top: max(8px, env(safe-area-inset-top));
+                bottom: max(8px, env(safe-area-inset-bottom));
+                width: auto;
+                max-width: none;
+                max-height: none;
+                margin: 0;
+                padding: 18px 14px 86px;
+                overflow-y: auto;
+                z-index: 350;
+            }
+
+            #controlsMenu .menu-button.cancel-button {
+                position: sticky;
+                bottom: 0;
+                margin-top: 12px;
+            }
+
+            #menu::-webkit-scrollbar {
+                display: none;
             }
 
             #menu h1, #characterMenu h1, #searchingMenu h1, #controlsMenu h1 {
@@ -1022,6 +1024,39 @@
                 max-height: 120px;
             }
 
+            #menu h1 {
+                font-size: clamp(1.35rem, 3.6vh, 2.05rem);
+                margin-bottom: clamp(10px, 1.7vh, 18px);
+                letter-spacing: 1px;
+            }
+
+            #menu .menu-button {
+                margin: clamp(6px, 0.95vh, 10px) 0;
+                padding: clamp(10px, 1.5vh, 14px) clamp(16px, 3.2vw, 20px);
+                font-size: clamp(14px, 1.9vh, 16px);
+            }
+
+            #menu .patch-notes-card {
+                margin-top: clamp(10px, 1.5vh, 14px);
+                padding: clamp(9px, 1.2vh, 11px);
+            }
+
+            #menu .patch-notes-header {
+                margin-bottom: clamp(5px, 0.8vh, 7px);
+                font-size: clamp(11px, 1.45vh, 12px);
+            }
+
+            #menu .patch-notes-version {
+                font-size: clamp(9px, 1.2vh, 10px);
+            }
+
+            #menu .patch-notes-list {
+                max-height: min(16vh, 92px);
+                padding-left: 16px;
+                font-size: clamp(10px, 1.35vh, 12px);
+                line-height: 1.25;
+            }
+
             .menu-link {
                 top: 12px;
                 right: 12px;
@@ -1030,24 +1065,86 @@
             }
 
             .mobile-stick {
-                width: 128px;
-                height: 128px;
+                width: 112px;
+                height: 112px;
             }
 
             .mobile-stick-knob {
-                width: 48px;
-                height: 48px;
+                width: 42px;
+                height: 42px;
             }
 
             .mobile-aim-arc {
-                width: 128px;
-                height: 128px;
+                width: 112px;
+                height: 112px;
             }
 
             .mobile-arc-button {
                 width: 46px;
                 height: 46px;
                 font-size: 15px;
+            }
+
+            .health-bar-container,
+            .weapon-info-container {
+                top: max(10px, env(safe-area-inset-top));
+                padding: clamp(8px, 1.2vh, 10px) clamp(10px, 2.6vw, 12px);
+                border-radius: 12px;
+            }
+
+            .health-bar-container {
+                left: 10px;
+            }
+
+            .weapon-info-container {
+                right: 10px;
+                min-width: 0;
+                width: clamp(130px, 34vw, 180px);
+            }
+
+            .health-bar {
+                width: clamp(150px, 42vw, 240px);
+                height: clamp(12px, 1.8vh, 16px);
+            }
+
+            .health-label,
+            .weapon-label {
+                font-size: clamp(10px, 1.4vh, 12px);
+                margin-bottom: clamp(4px, 0.8vh, 6px);
+            }
+
+            .weapon-name {
+                font-size: clamp(12px, 1.9vh, 15px);
+                margin-bottom: clamp(4px, 0.8vh, 6px);
+                letter-spacing: 1px;
+            }
+
+            .ammo-display {
+                font-size: clamp(11px, 1.6vh, 13px);
+            }
+
+            .ability-dock {
+                left: 10px;
+                bottom: max(10px, env(safe-area-inset-bottom));
+                gap: clamp(6px, 1vw, 8px);
+            }
+
+            .ability-container,
+            .shared-ability-container {
+                padding: clamp(6px, 0.9vh, 8px);
+                border-radius: 9px;
+            }
+
+            .ability-box {
+                width: clamp(30px, 8.2vw, 36px);
+                height: clamp(30px, 8.2vw, 36px);
+                margin-bottom: 4px;
+            }
+
+            .ability-key,
+            .ability-text {
+                font-size: clamp(8px, 1.2vh, 10px);
+                letter-spacing: 0.5px;
             }
 
             .character-actions {
@@ -1059,9 +1156,13 @@
         }
 
         @media (hover: none) and (pointer: coarse) and (max-height: 820px) {
-            #menu, #characterMenu, #searchingMenu, #controlsMenu {
+            #characterMenu, #searchingMenu, #controlsMenu {
                 max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)));
                 padding: 28px 16px;
+            }
+
+            #menu {
+                padding: clamp(14px, 2.6vh, 22px) 16px;
             }
 
             #menu h1, #characterMenu h1, #searchingMenu h1, #controlsMenu h1 {
@@ -1075,13 +1176,43 @@
                 font-size: 15px;
             }
 
+            #menu .menu-button {
+                margin: clamp(5px, 0.85vh, 8px) 0;
+                padding: clamp(8px, 1.25vh, 10px) 16px;
+                font-size: clamp(13px, 1.7vh, 14px);
+            }
+
+            #menu .patch-notes-card {
+                margin-top: clamp(7px, 1.1vh, 10px);
+                padding: clamp(8px, 1vh, 10px);
+            }
+
+            #menu .patch-notes-list {
+                max-height: min(13vh, 72px);
+                font-size: clamp(9px, 1.2vh, 11px);
+                line-height: 1.2;
+            }
+
+            .health-bar {
+                width: clamp(130px, 38vw, 200px);
+            }
+
+            .weapon-info-container {
+                width: clamp(122px, 32vw, 160px);
+            }
+
+            .ability-box {
+                width: clamp(28px, 7.2vw, 32px);
+                height: clamp(28px, 7.2vw, 32px);
+            }
+
             .equip-tabs {
                 grid-template-columns: repeat(2, 1fr);
                 gap: 6px;
             }
 
             .equip-grid {
-                grid-template-columns: 1fr;
+                grid-template-columns: repeat(2, 1fr);
                 gap: 8px;
                 margin-bottom: 10px;
             }
@@ -1215,10 +1346,6 @@
                 <div class="control-key">Z</div>
                 <div class="control-action">Toggle Passive (King) / Detonate (Demoman)</div>
             </div>
-            <div class="control-row">
-                <div class="control-key">Mobile</div>
-                <div class="control-action">Left stick move, right stick aim, on-screen action buttons</div>
-            </div>
         </div>
         <button class="menu-button cancel-button" onclick="showMainMenu()">Back</button>
     </div>
@@ -1280,7 +1407,6 @@
                 <div id="aimStickKnob" class="mobile-stick-knob"></div>
             </div>
             <div class="mobile-aim-arc">
-                <button id="mobileFireButton" class="mobile-arc-button mobile-arc-fire">M1</button>
                 <button id="mobileSwapButton" class="mobile-arc-button mobile-arc-q">Q</button>
                 <button id="mobileReloadButton" class="mobile-arc-button mobile-arc-r">R</button>
                 <button id="mobileAbilityButton" class="mobile-arc-button mobile-arc-e">E</button>
