@@ -32,6 +32,7 @@ class GameStateCache {
                 HP: Math.round(player.HP),
                 maxHP: player.maxHP,
                 radius: player.radius,
+                moveSpeed: Math.round((player.getMoveSpeed ? player.getMoveSpeed() : player.speed || 0) * 1000) / 1000,
                 name: player.name,
                 kills: player.kills,
                 flashingTimer: Math.round(player.flashingTimer * 100) / 100,
@@ -240,6 +241,7 @@ class GameStateCache {
         return current.x !== previous.x ||
                current.y !== previous.y ||
                current.angle !== previous.angle ||
+               current.moveSpeed !== previous.moveSpeed ||
                current.HP !== previous.HP ||
                current.flashingTimer !== previous.flashingTimer ||
                current.enlarged !== previous.enlarged ||

@@ -146,8 +146,8 @@ var gameState = {
     obstacles: [],
 }
 const SNAPSHOT_BUFFER_SIZE = 90;
-const RENDER_INTERPOLATION_DELAY_MS = 30;
-const MAX_RENDER_INTERPOLATION_DELAY_MS = 60;
+const RENDER_INTERPOLATION_DELAY_MS = 60;
+const MAX_RENDER_INTERPOLATION_DELAY_MS = 120;
 const MAX_EXTRAPOLATION_MS = 80;
 const MIN_EXTRAPOLATION_SAMPLE_MS = 12;
 const MAX_LINEAR_EXTRAPOLATION_STEP = 42;
@@ -156,6 +156,18 @@ const MAX_EXTRAPOLATION_ALPHA = 0.65;
 const EXTRAPOLATION_ALPHA_EASING = 1.2;
 const SNAPSHOT_INTERVAL_SMOOTHING = 0.15;
 const SNAPSHOT_JITTER_SMOOTHING = 0.2;
+const SERVER_DELTA_TIME_DIVISOR = 40;
+const MAX_PREDICTION_STEP_MS = 50;
+const LOCAL_RECONCILIATION_LERP = 0.24;
+const LOCAL_RECONCILIATION_SNAP_DISTANCE = 170;
+const PREDICTION_OVERLAP_ITERATIONS = 6;
+const FALLBACK_MOVE_SPEED_BY_NAME = Object.freeze({
+    Ninja: 8,
+    King: 3,
+    Berserker: 6,
+    Demoman: 5.5,
+    Reaver: 5.8
+});
 const NET_DEBUG_OVERLAY_DEFAULT = false;
 const NET_DEBUG_TOGGLE_KEY = 'l';
 let snapshotBuffer = [];
@@ -168,6 +180,7 @@ let netDebugOverlayEnabled = NET_DEBUG_OVERLAY_DEFAULT;
 let netDebugOverlayElement = null;
 let renderFpsEwma = 60;
 let lastRenderLoopTimestamp = null;
+let lastLocalPredictionTimestamp = null;
 let netDebugStats = {
     mode: 'none',
     lastInterpolationDelayMs: RENDER_INTERPOLATION_DELAY_MS,
@@ -181,6 +194,14 @@ let netDebugStats = {
 };
 let renderLoopId = null;
 let mainInitialized = false;
+let localPredictionState = null;
+let localAimAngle = 0;
+const localInputState = {
+    up: false,
+    down: false,
+    left: false,
+    right: false
+};
 
 const combatTexts = [];
 const explosiveEffects = [];
@@ -605,6 +626,9 @@ function resetClientCache() {
     snapshotTiming.lastReceivedAt = null;
     snapshotTiming.intervalEwma = 1000 / 30;
     snapshotTiming.jitterEwma = 0;
+    localPredictionState = null;
+    lastLocalPredictionTimestamp = null;
+    clearLocalInputState();
 }
 
 function startRenderLoop() {
@@ -633,6 +657,7 @@ function startRenderLoop() {
             return;
         }
 
+        applyLocalPlayerPrediction(renderState, timestamp);
         draw(renderState);
     };
 
@@ -809,6 +834,301 @@ function getDynamicInterpolationDelayMs() {
     const stalenessBoost = Math.max(0, lastSnapshotAgeMs - snapshotTiming.intervalEwma) * 0.45;
     const estimatedDelay = snapshotTiming.intervalEwma * 2.35 + snapshotTiming.jitterEwma * 2.8 + stalenessBoost;
     return Math.max(RENDER_INTERPOLATION_DELAY_MS, Math.min(MAX_RENDER_INTERPOLATION_DELAY_MS, estimatedDelay));
+}
+
+function getLatestSnapshotState() {
+    if (snapshotBuffer.length === 0) {
+        return null;
+    }
+    return snapshotBuffer[snapshotBuffer.length - 1].state;
+}
+
+function getCollidableObstacles(obstacles = [], playerId = null) {
+    return obstacles.filter((obstacle) => {
+        if (!obstacle) return false;
+        if (obstacle.kind === 'autoTurret' && obstacle.ownerId === playerId) {
+            return false;
+        }
+        return true;
+    });
+}
+
+function hasObstacleRotation(obstacle) {
+    return typeof obstacle?.angle === 'number';
+}
+
+function circleRectCollision(circleX, circleY, circleRadius, rect) {
+    const closestX = Math.max(rect.x, Math.min(circleX, rect.x + rect.w));
+    const closestY = Math.max(rect.y, Math.min(circleY, rect.y + rect.h));
+    const dx = circleX - closestX;
+    const dy = circleY - closestY;
+    return dx * dx + dy * dy < circleRadius * circleRadius;
+}
+
+function circleRotatedRectCollision(circleX, circleY, circleRadius, rect) {
+    const dx = circleX - rect.x;
+    const dy = circleY - rect.y;
+    const cos = Math.cos(-rect.angle);
+    const sin = Math.sin(-rect.angle);
+    const localX = dx * cos - dy * sin;
+    const localY = dx * sin + dy * cos;
+    const halfW = rect.w / 2;
+    const halfH = rect.h / 2;
+    const closestX = Math.max(-halfW, Math.min(localX, halfW));
+    const closestY = Math.max(-halfH, Math.min(localY, halfH));
+    const distX = localX - closestX;
+    const distY = localY - closestY;
+    return distX * distX + distY * distY < circleRadius * circleRadius;
+}
+
+function circleObstacleCollision(circleX, circleY, circleRadius, obstacle) {
+    if (hasObstacleRotation(obstacle)) {
+        return circleRotatedRectCollision(circleX, circleY, circleRadius, obstacle);
+    }
+    return circleRectCollision(circleX, circleY, circleRadius, obstacle);
+}
+
+function getCircleRectSeparationVector(circleX, circleY, circleRadius, rect) {
+    const closestX = Math.max(rect.x, Math.min(circleX, rect.x + rect.w));
+    const closestY = Math.max(rect.y, Math.min(circleY, rect.y + rect.h));
+    const dx = circleX - closestX;
+    const dy = circleY - closestY;
+    const distSq = dx * dx + dy * dy;
+    if (distSq >= circleRadius * circleRadius) {
+        return null;
+    }
+    const dist = Math.sqrt(distSq);
+    if (dist > 0) {
+        const penetration = circleRadius - dist;
+        return { x: (dx / dist) * penetration, y: (dy / dist) * penetration };
+    }
+    const insideX = circleX >= rect.x && circleX <= rect.x + rect.w;
+    const insideY = circleY >= rect.y && circleY <= rect.y + rect.h;
+    if (!(insideX && insideY)) {
+        return null;
+    }
+    const left = circleX - rect.x;
+    const right = rect.x + rect.w - circleX;
+    const top = circleY - rect.y;
+    const bottom = rect.y + rect.h - circleY;
+    const minSide = Math.min(left, right, top, bottom);
+    if (minSide === left) return { x: -(circleRadius + left), y: 0 };
+    if (minSide === right) return { x: circleRadius + right, y: 0 };
+    if (minSide === top) return { x: 0, y: -(circleRadius + top) };
+    return { x: 0, y: circleRadius + bottom };
+}
+
+function getCircleRotatedRectSeparationVector(circleX, circleY, circleRadius, rect) {
+    const dx = circleX - rect.x;
+    const dy = circleY - rect.y;
+    const cos = Math.cos(-rect.angle);
+    const sin = Math.sin(-rect.angle);
+    const localX = dx * cos - dy * sin;
+    const localY = dx * sin + dy * cos;
+    const halfW = rect.w / 2;
+    const halfH = rect.h / 2;
+    const closestX = Math.max(-halfW, Math.min(localX, halfW));
+    const closestY = Math.max(-halfH, Math.min(localY, halfH));
+    const distX = localX - closestX;
+    const distY = localY - closestY;
+    const distSq = distX * distX + distY * distY;
+    if (distSq >= circleRadius * circleRadius) {
+        return null;
+    }
+
+    let pushLocalX = 0;
+    let pushLocalY = 0;
+    const dist = Math.sqrt(distSq);
+    if (dist > 0) {
+        const penetration = circleRadius - dist;
+        pushLocalX = (distX / dist) * penetration;
+        pushLocalY = (distY / dist) * penetration;
+    } else {
+        const left = halfW + localX;
+        const right = halfW - localX;
+        const top = halfH + localY;
+        const bottom = halfH - localY;
+        const minSide = Math.min(left, right, top, bottom);
+        if (minSide === left) pushLocalX = -(circleRadius + left);
+        else if (minSide === right) pushLocalX = circleRadius + right;
+        else if (minSide === top) pushLocalY = -(circleRadius + top);
+        else pushLocalY = circleRadius + bottom;
+    }
+
+    const worldCos = Math.cos(rect.angle);
+    const worldSin = Math.sin(rect.angle);
+    return {
+        x: pushLocalX * worldCos - pushLocalY * worldSin,
+        y: pushLocalX * worldSin + pushLocalY * worldCos
+    };
+}
+
+function getCircleObstacleSeparationVector(circleX, circleY, circleRadius, obstacle) {
+    if (hasObstacleRotation(obstacle)) {
+        return getCircleRotatedRectSeparationVector(circleX, circleY, circleRadius, obstacle);
+    }
+    return getCircleRectSeparationVector(circleX, circleY, circleRadius, obstacle);
+}
+
+function resolveCircleObstacleOverlaps(circleX, circleY, circleRadius, obstacles = []) {
+    let resolvedX = circleX;
+    let resolvedY = circleY;
+    for (let i = 0; i < PREDICTION_OVERLAP_ITERATIONS; i++) {
+        let totalPushX = 0;
+        let totalPushY = 0;
+        let hadOverlap = false;
+        for (const obstacle of obstacles) {
+            const push = getCircleObstacleSeparationVector(resolvedX, resolvedY, circleRadius, obstacle);
+            if (!push) continue;
+            hadOverlap = true;
+            totalPushX += push.x;
+            totalPushY += push.y;
+        }
+        if (!hadOverlap) {
+            break;
+        }
+        resolvedX += totalPushX;
+        resolvedY += totalPushY;
+    }
+    return { x: resolvedX, y: resolvedY };
+}
+
+function getInputAxis() {
+    let dx = 0;
+    let dy = 0;
+    if (localInputState.up) dy = -1;
+    if (localInputState.down) dy = 1;
+    if (localInputState.left) dx = -1;
+    if (localInputState.right) dx = 1;
+    if (dx !== 0 && dy !== 0) {
+        dx *= 0.707;
+        dy *= 0.707;
+    }
+    return { dx, dy };
+}
+
+function getFallbackMoveSpeed(playerName) {
+    return FALLBACK_MOVE_SPEED_BY_NAME[playerName] || 6;
+}
+
+function reconcileLocalPrediction(localPlayer, authoritativePlayer) {
+    const errorX = authoritativePlayer.x - localPlayer.x;
+    const errorY = authoritativePlayer.y - localPlayer.y;
+    const distance = Math.sqrt(errorX * errorX + errorY * errorY);
+    if (distance > LOCAL_RECONCILIATION_SNAP_DISTANCE) {
+        localPlayer.x = authoritativePlayer.x;
+        localPlayer.y = authoritativePlayer.y;
+        return;
+    }
+    localPlayer.x += errorX * LOCAL_RECONCILIATION_LERP;
+    localPlayer.y += errorY * LOCAL_RECONCILIATION_LERP;
+}
+
+function applyPredictedMovement(localPlayer, authoritativePlayer, obstacles, deltaMs) {
+    if (authoritativePlayer.stunned) {
+        return;
+    }
+    const { dx, dy } = getInputAxis();
+    if (dx === 0 && dy === 0) {
+        return;
+    }
+    const moveSpeed = typeof authoritativePlayer.moveSpeed === 'number'
+        ? authoritativePlayer.moveSpeed
+        : getFallbackMoveSpeed(authoritativePlayer.name);
+    const deltaTime = deltaMs / SERVER_DELTA_TIME_DIVISOR;
+    const movementX = dx * deltaTime * moveSpeed;
+    const movementY = dy * deltaTime * moveSpeed;
+    const radius = typeof authoritativePlayer.radius === 'number' ? authoritativePlayer.radius : 20;
+    const nextX = localPlayer.x + movementX;
+    const nextY = localPlayer.y + movementY;
+    let canMoveX = true;
+    let canMoveY = true;
+
+    for (const obstacle of obstacles) {
+        if (canMoveX && circleObstacleCollision(nextX, localPlayer.y, radius, obstacle)) {
+            canMoveX = false;
+        }
+        if (canMoveY && circleObstacleCollision(localPlayer.x, nextY, radius, obstacle)) {
+            canMoveY = false;
+        }
+        if (!canMoveX && !canMoveY) {
+            break;
+        }
+    }
+
+    if (canMoveX) {
+        localPlayer.x = nextX;
+    }
+    if (canMoveY) {
+        localPlayer.y = nextY;
+    }
+
+    const resolvedPosition = resolveCircleObstacleOverlaps(localPlayer.x, localPlayer.y, radius, obstacles);
+    localPlayer.x = resolvedPosition.x;
+    localPlayer.y = resolvedPosition.y;
+
+    const distanceFromCenter = Math.sqrt(localPlayer.x * localPlayer.x + localPlayer.y * localPlayer.y);
+    const maxDistance = mapRadius - radius;
+    if (distanceFromCenter > maxDistance) {
+        const normalX = localPlayer.x / Math.max(0.0001, distanceFromCenter);
+        const normalY = localPlayer.y / Math.max(0.0001, distanceFromCenter);
+        localPlayer.x = normalX * maxDistance;
+        localPlayer.y = normalY * maxDistance;
+    }
+}
+
+function applyLocalPlayerPrediction(renderState, timestamp) {
+    if (!renderState?.players?.length || !socket.id) {
+        localPredictionState = null;
+        return;
+    }
+
+    const localPlayerIndex = renderState.players.findIndex((player) => player.id === socket.id);
+    if (localPlayerIndex < 0) {
+        localPredictionState = null;
+        return;
+    }
+
+    const latestSnapshotState = getLatestSnapshotState();
+    const authoritativePlayer = latestSnapshotState?.players?.find((player) => player.id === socket.id)
+        || renderState.players[localPlayerIndex];
+    if (!authoritativePlayer) {
+        return;
+    }
+
+    const now = typeof timestamp === 'number' ? timestamp : getNowMs();
+    if (
+        !localPredictionState ||
+        typeof localPredictionState.x !== 'number' ||
+        typeof localPredictionState.y !== 'number'
+    ) {
+        localPredictionState = {
+            x: authoritativePlayer.x,
+            y: authoritativePlayer.y,
+            angle: authoritativePlayer.angle
+        };
+        lastLocalPredictionTimestamp = now;
+    }
+
+    const rawDeltaMs = typeof lastLocalPredictionTimestamp === 'number' ? now - lastLocalPredictionTimestamp : 0;
+    const deltaMs = clamp(rawDeltaMs, 0, MAX_PREDICTION_STEP_MS);
+    lastLocalPredictionTimestamp = now;
+
+    reconcileLocalPrediction(localPredictionState, authoritativePlayer);
+    const collidableObstacles = getCollidableObstacles(
+        latestSnapshotState?.obstacles || renderState.obstacles || [],
+        authoritativePlayer.id
+    );
+    applyPredictedMovement(localPredictionState, authoritativePlayer, collidableObstacles, deltaMs);
+
+    localPredictionState.angle = localAimAngle;
+    renderState.players[localPlayerIndex] = {
+        ...renderState.players[localPlayerIndex],
+        ...authoritativePlayer,
+        x: localPredictionState.x,
+        y: localPredictionState.y,
+        angle: localPredictionState.angle
+    };
 }
 
 function interpolateEntities(previousEntities = [], nextEntities = [], alpha = 0, linearKeys = [], angularKeys = []) {
@@ -1883,10 +2203,12 @@ function handleKeyDown(event) {
         netDebugOverlayEnabled = !netDebugOverlayEnabled;
         return;
     }
+    updateLocalInputState(event.keyCode, true);
     socket.emit('keydown', event.keyCode);
 }
 
 function handleKeyUp(event) {
+    updateLocalInputState(event.keyCode, false);
     socket.emit('keyup', event.keyCode);
 }
 
@@ -1899,7 +2221,7 @@ function handleMouseMove(event) {
     const centerY = canvas.height / 2;
     
     const angle = Math.atan2(mouseY - centerY, mouseX - centerX);
-    
+    localAimAngle = angle;
     socket.emit('changeAngle', angle);
 }
 
@@ -1909,6 +2231,36 @@ function handleMouseDown(event) {
 
 function handleMouseUp(event) {
     socket.emit('mouseUp', event.button);
+}
+
+function updateLocalInputState(keyCode, pressed) {
+    switch (keyCode) {
+        case 87:
+        case 119:
+            localInputState.up = pressed;
+            break;
+        case 83:
+        case 115:
+            localInputState.down = pressed;
+            break;
+        case 65:
+        case 97:
+            localInputState.left = pressed;
+            break;
+        case 68:
+        case 100:
+            localInputState.right = pressed;
+            break;
+        default:
+            break;
+    }
+}
+
+function clearLocalInputState() {
+    localInputState.up = false;
+    localInputState.down = false;
+    localInputState.left = false;
+    localInputState.right = false;
 }
 
 
