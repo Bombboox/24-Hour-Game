@@ -39,17 +39,13 @@ const moveStick = document.getElementById("moveStick");
 const moveStickKnob = document.getElementById("moveStickKnob");
 const aimStick = document.getElementById("aimStick");
 const aimStickKnob = document.getElementById("aimStickKnob");
+const mobileFireButton = document.getElementById("mobileFireButton");
 const mobileReloadButton = document.getElementById("mobileReloadButton");
 const mobileSwapButton = document.getElementById("mobileSwapButton");
 const mobileAbilityButton = document.getElementById("mobileAbilityButton");
 const mobileSharedButton = document.getElementById("mobileSharedButton");
 const mobilePassiveButton = document.getElementById("mobilePassiveButton");
 const mobileQuitButton = document.getElementById("mobileQuitButton");
-const startMatchButton = document.getElementById("startMatchButton");
-const ffaMatchButton = document.getElementById("ffaMatchButton");
-const characterButton = document.getElementById("characterButton");
-const controlsButton = document.getElementById("controlsButton");
-const mobileInstallNotice = document.getElementById("mobileInstallNotice");
 
 const MAP_COLOR = "#d3d3d3";
 const GRID_MINOR_SIZE = 35;
@@ -258,7 +254,6 @@ const MOBILE_INPUT_KEYS = {
 };
 const virtualPressedKeys = new Set();
 const isTouchDevice = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
-const isStandaloneApp = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 const mobileControlState = {
     movePointerId: null,
     aimPointerId: null,
@@ -284,7 +279,6 @@ initializeMenuBackdrop();
 registerServiceWorker();
 setupPwaInstallButton();
 setupMobileControls();
-updateMobileInstallGate();
 
 function sanitizePlayerSettings(settings) {
     const characterType = VALID_CHARACTERS.includes(settings?.characterType) ? settings.characterType : 'berserker';
@@ -328,14 +322,6 @@ function setupPwaInstallButton() {
 
     installButton.addEventListener('click', async () => {
         if (!deferredInstallPrompt) {
-            if (isMobileInstallGateActive()) {
-                Toastify({
-                    text: 'Install from your browser menu, then open the app from home screen.',
-                    duration: 3200,
-                    gravity: "top",
-                    position: "right"
-                }).showToast();
-            }
             return;
         }
 
@@ -357,7 +343,6 @@ function setupPwaInstallButton() {
     window.addEventListener('appinstalled', () => {
         deferredInstallPrompt = null;
         installButton.style.display = 'none';
-        updateMobileInstallGate();
         Toastify({
             text: 'App installed successfully.',
             duration: 2200,
@@ -377,30 +362,6 @@ function setupMobileControls() {
     setupMobileActionButtons();
     setupMobileQuitButton();
     updateMobileHudVisibility();
-}
-
-function isMobileInstallGateActive() {
-    return isTouchDevice && !isStandaloneApp();
-}
-
-function updateMobileInstallGate() {
-    const gateActive = isMobileInstallGateActive();
-    const gatedButtons = [startMatchButton, ffaMatchButton, characterButton, controlsButton];
-
-    gatedButtons.forEach((button) => {
-        if (!button) {
-            return;
-        }
-        button.style.display = gateActive ? 'none' : '';
-    });
-
-    if (mobileInstallNotice) {
-        mobileInstallNotice.style.display = gateActive ? 'block' : 'none';
-    }
-
-    if (installButton && gateActive && !deferredInstallPrompt) {
-        installButton.style.display = 'block';
-    }
 }
 
 function setupMovementStick() {
@@ -479,10 +440,6 @@ function setupAimStick() {
     const release = () => {
         mobileControlState.aimPointerId = null;
         positionStickKnob(aimStickKnob, 0, 0);
-        if (mobileControlState.firePressed) {
-            mobileControlState.firePressed = false;
-            socket.emit('mouseUp', 0);
-        }
     };
 
     const updateFromEvent = (event) => {
@@ -509,10 +466,6 @@ function setupAimStick() {
         event.preventDefault();
         mobileControlState.aimPointerId = event.pointerId;
         aimStick.setPointerCapture(event.pointerId);
-        if (!mobileControlState.firePressed) {
-            mobileControlState.firePressed = true;
-            socket.emit('mouseDown', 0);
-        }
         updateFromEvent(event);
     });
 
@@ -542,11 +495,25 @@ function setupAimStick() {
 }
 
 function setupMobileActionButtons() {
+    bindMobileHoldButton(mobileFireButton, () => {
+        if (mobileControlState.firePressed) {
+            return;
+        }
+        mobileControlState.firePressed = true;
+        socket.emit('mouseDown', 0);
+    }, () => {
+        if (!mobileControlState.firePressed) {
+            return;
+        }
+        mobileControlState.firePressed = false;
+        socket.emit('mouseUp', 0);
+    });
+
     bindMobileTapButton(mobileReloadButton, MOBILE_INPUT_KEYS.reload);
     bindMobileTapButton(mobileSwapButton, MOBILE_INPUT_KEYS.swap);
-    bindMobileKeyHoldButton(mobileAbilityButton, MOBILE_INPUT_KEYS.ability);
-    bindMobileKeyHoldButton(mobileSharedButton, MOBILE_INPUT_KEYS.shared);
-    bindMobileKeyHoldButton(mobilePassiveButton, MOBILE_INPUT_KEYS.passive);
+    bindMobileTapButton(mobileAbilityButton, MOBILE_INPUT_KEYS.ability);
+    bindMobileTapButton(mobileSharedButton, MOBILE_INPUT_KEYS.shared);
+    bindMobileTapButton(mobilePassiveButton, MOBILE_INPUT_KEYS.passive);
 }
 
 function setupMobileQuitButton() {
@@ -582,7 +549,7 @@ function bindMobileTapButton(button, keyCode) {
     });
 }
 
-function bindMobileKeyHoldButton(button, keyCode) {
+function bindMobileHoldButton(button, onPress, onRelease) {
     if (!button) {
         return;
     }
@@ -593,15 +560,15 @@ function bindMobileKeyHoldButton(button, keyCode) {
             return;
         }
         event.preventDefault();
-        setVirtualKey(keyCode, false);
         pointerId = null;
+        onRelease();
     };
 
     button.addEventListener('pointerdown', (event) => {
         event.preventDefault();
         pointerId = event.pointerId;
         button.setPointerCapture(event.pointerId);
-        setVirtualKey(keyCode, true);
+        onPress();
     });
 
     button.addEventListener('pointerup', release);
@@ -736,7 +703,6 @@ function showMainMenu() {
     hideAllMenus();
     gameScreen.style.display = 'none';
     menu.style.display = 'block';
-    updateMobileInstallGate();
     if (menuLink) {
         menuLink.style.display = 'flex';
     }
@@ -2592,10 +2558,6 @@ function drawExplosiveEffects() {
 }
 
 function startGame() {
-    if (isMobileInstallGateActive()) {
-        updateMobileInstallGate();
-        return;
-    }
     gameMode = '1v1';
     showSearching();
     socket.emit('findGame', {
@@ -2608,10 +2570,6 @@ function startGame() {
 }
 
 function startFreeForAll() {
-    if (isMobileInstallGateActive()) {
-        updateMobileInstallGate();
-        return;
-    }
     gameMode = 'ffa';
     showSearching();
     socket.emit('findFreeForAll', {

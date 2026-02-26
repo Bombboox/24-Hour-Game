@@ -602,18 +602,6 @@
             margin-bottom: 0;
         }
 
-        .menu-note {
-            margin: 12px 0 0;
-            padding: 10px 12px;
-            border-radius: 10px;
-            border: 1px solid rgba(255, 255, 255, 0.32);
-            background: rgba(8, 25, 40, 0.5);
-            color: rgba(240, 248, 255, 0.95);
-            font-size: 12px;
-            line-height: 1.4;
-            display: none;
-        }
-
         #installButton {
             display: none;
         }
@@ -880,11 +868,25 @@
             box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
         }
 
+<<<<<<< HEAD
         .mobile-arc-z { --arc-angle: -14deg; --arc-radius: 104px; }
         .mobile-arc-q { --arc-angle: -110deg; --arc-radius: 103px; }
         .mobile-arc-r { --arc-angle: -86deg; --arc-radius: 106px; }
         .mobile-arc-e { --arc-angle: -62deg; --arc-radius: 109px; }
         .mobile-arc-c { --arc-angle: -38deg; --arc-radius: 108px; }
+=======
+        .mobile-arc-fire {
+            background: rgba(170, 30, 30, 0.88);
+            border-color: rgba(255, 180, 180, 0.62);
+        }
+
+        .mobile-arc-q { --arc-angle: -140deg; --arc-radius: 100px; }
+        .mobile-arc-r { --arc-angle: -112deg; --arc-radius: 102px; }
+        .mobile-arc-e { --arc-angle: -84deg; --arc-radius: 104px; }
+        .mobile-arc-c { --arc-angle: -56deg; --arc-radius: 102px; }
+        .mobile-arc-z { --arc-angle: -28deg; --arc-radius: 100px; }
+        .mobile-arc-fire { --arc-angle: -166deg; --arc-radius: 92px; }
+>>>>>>> parent of 43845ba (removed redundant buttons on mobile, misc bug fixes)
 
         .mobile-quit-button {
             position: absolute;
@@ -1106,12 +1108,11 @@
 
     <div id="menu">
         <h1>Boox Shoot</h1>
-        <button id="startMatchButton" class="menu-button" onclick="startGame()">1v1 Match</button>
-        <button id="ffaMatchButton" class="menu-button ffa-button" onclick="startFreeForAll()">Free For All</button>
-        <button id="characterButton" class="menu-button character-button" onclick="showCharacter()">Character</button>
-        <button id="controlsButton" class="menu-button" onclick="showControls()">Controls</button>
+        <button class="menu-button" onclick="startGame()">1v1 Match</button>
+        <button class="menu-button ffa-button" onclick="startFreeForAll()">Free For All</button>
+        <button class="menu-button character-button" onclick="showCharacter()">Character</button>
+        <button class="menu-button" onclick="showControls()">Controls</button>
         <button id="installButton" class="menu-button">Install App</button>
-        <div id="mobileInstallNotice" class="menu-note">Mobile play is app-only. Install and open from your home screen to play.</div>
         <div class="patch-notes-card">
             <div class="patch-notes-header">
                 <span>Patch Notes</span>
@@ -1279,6 +1280,7 @@
                 <div id="aimStickKnob" class="mobile-stick-knob"></div>
             </div>
             <div class="mobile-aim-arc">
+                <button id="mobileFireButton" class="mobile-arc-button mobile-arc-fire">M1</button>
                 <button id="mobileSwapButton" class="mobile-arc-button mobile-arc-q">Q</button>
                 <button id="mobileReloadButton" class="mobile-arc-button mobile-arc-r">R</button>
                 <button id="mobileAbilityButton" class="mobile-arc-button mobile-arc-e">E</button>
