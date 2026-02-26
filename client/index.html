@@ -396,6 +396,8 @@
             box-sizing: border-box;
             position: relative;
             z-index: 2;
+            max-height: 96vh;
+            overflow-y: auto;
         }
 
         #menu {
@@ -429,6 +431,7 @@
             max-width: 560px;
             width: min(94vw, 560px);
             padding: 44px 28px;
+            max-height: 94vh;
         }
         
         #characterMenu, #searchingMenu, #controlsMenu {
@@ -730,6 +733,13 @@
             text-align: center;
         }
 
+        .character-actions {
+            position: sticky;
+            bottom: 0;
+            padding-top: 12px;
+            background: linear-gradient(to top, rgba(18, 52, 78, 0.9), rgba(18, 52, 78, 0));
+        }
+
         .match-end-overlay {
             position: absolute;
             inset: 0;
@@ -965,7 +975,7 @@
             #menu, #characterMenu, #searchingMenu, #controlsMenu {
                 width: min(94vw, 400px);
                 padding: 42px 20px;
-                max-height: calc(100vh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)));
+                max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)));
                 overflow-y: auto;
             }
 
@@ -1008,6 +1018,45 @@
                 width: 46px;
                 height: 46px;
                 font-size: 15px;
+            }
+        }
+
+        @media (max-height: 820px) {
+            #menu, #characterMenu, #searchingMenu, #controlsMenu {
+                max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)));
+                padding: 28px 16px;
+            }
+
+            #menu h1, #characterMenu h1, #searchingMenu h1, #controlsMenu h1 {
+                font-size: 1.8em;
+                margin-bottom: 14px;
+            }
+
+            .menu-button {
+                margin: 10px 0;
+                padding: 13px 18px;
+                font-size: 15px;
+            }
+
+            .equip-tabs {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 6px;
+            }
+
+            .equip-grid {
+                grid-template-columns: 1fr;
+                gap: 8px;
+                margin-bottom: 10px;
+            }
+
+            .equip-option {
+                padding: 10px 10px;
+                font-size: 13px;
+            }
+
+            .character-actions {
+                padding-top: 8px;
+                padding-bottom: max(6px, env(safe-area-inset-bottom));
             }
         }
     </style>
@@ -1090,8 +1139,10 @@
                 <button class="equip-option" data-type="sharedAbility" data-value="healingcircle" onclick="selectEquip('sharedAbility', 'healingcircle')">Healing Circle</button>
             </div>
         </div>
-        <button class="menu-button" onclick="save()">Save</button>
-        <button class="menu-button cancel-button" onclick="showMainMenu()">Back</button>
+        <div class="character-actions">
+            <button class="menu-button" onclick="save()">Save</button>
+            <button class="menu-button cancel-button" onclick="showMainMenu()">Back</button>
+        </div>
     </div>
     
     <div id="searchingMenu">
