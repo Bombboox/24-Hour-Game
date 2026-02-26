@@ -405,7 +405,8 @@
                 0 20px 40px rgba(0, 0, 0, 0.35),
                 0 0 30px rgba(64, 191, 255, 0.2);
             animation: menuPulse 3.5s ease-in-out infinite;
-            overflow: hidden;
+            overflow-x: hidden;
+            overflow-y: auto;
             height: 96.7vh;
         }
 
@@ -821,36 +822,72 @@
             bottom: 18px;
         }
 
-        .mobile-actions {
+        .mobile-aim-arc {
             position: absolute;
             right: 18px;
-            top: 16px;
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 8px;
-            width: min(42vw, 220px);
-            pointer-events: auto;
-            touch-action: manipulation;
+            bottom: 18px;
+            width: 138px;
+            height: 138px;
+            pointer-events: none;
         }
 
-        .mobile-action-button {
-            padding: 10px 4px;
-            border: 1px solid rgba(255, 255, 255, 0.42);
-            border-radius: 10px;
-            background: rgba(8, 25, 40, 0.8);
+        .mobile-arc-button {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 52px;
+            height: 52px;
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            background: rgba(8, 25, 40, 0.86);
             color: #ffffff;
             font-family: 'CustomFont', 'Arial', sans-serif;
-            font-size: 11px;
+            font-size: 18px;
+            font-weight: 700;
             letter-spacing: 0.6px;
             text-transform: uppercase;
             user-select: none;
             -webkit-user-select: none;
+            pointer-events: auto;
             touch-action: manipulation;
+            transform:
+                translate(-50%, -50%)
+                rotate(var(--arc-angle, -90deg))
+                translateY(calc(-1 * var(--arc-radius, 100px)))
+                rotate(calc(-1 * var(--arc-angle, -90deg)));
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
         }
 
-        .mobile-fire-button {
+        .mobile-arc-fire {
             background: rgba(170, 30, 30, 0.88);
             border-color: rgba(255, 180, 180, 0.62);
+        }
+
+        .mobile-arc-q { --arc-angle: -140deg; --arc-radius: 100px; }
+        .mobile-arc-r { --arc-angle: -112deg; --arc-radius: 102px; }
+        .mobile-arc-e { --arc-angle: -84deg; --arc-radius: 104px; }
+        .mobile-arc-c { --arc-angle: -56deg; --arc-radius: 102px; }
+        .mobile-arc-z { --arc-angle: -28deg; --arc-radius: 100px; }
+        .mobile-arc-fire { --arc-angle: -166deg; --arc-radius: 92px; }
+
+        .mobile-quit-button {
+            position: absolute;
+            left: 14px;
+            top: 14px;
+            min-width: 76px;
+            height: 38px;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            border-radius: 999px;
+            background: rgba(170, 30, 30, 0.9);
+            color: #ffffff;
+            font-family: 'CustomFont', 'Arial', sans-serif;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+            pointer-events: auto;
+            touch-action: manipulation;
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
         }
         
         .searching-text {
@@ -911,9 +948,28 @@
         }
 
         @media (max-width: 640px) {
+            body {
+                overflow-y: auto;
+                align-items: flex-start;
+                justify-content: center;
+                padding-top: max(8px, env(safe-area-inset-top));
+                padding-bottom: max(8px, env(safe-area-inset-bottom));
+            }
+
             #menu, #characterMenu, #searchingMenu, #controlsMenu {
                 width: min(94vw, 400px);
                 padding: 42px 20px;
+                max-height: calc(100vh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)));
+                overflow-y: auto;
+            }
+
+            #menu {
+                height: auto;
+            }
+
+            #menu h1, #characterMenu h1, #searchingMenu h1, #controlsMenu h1 {
+                font-size: 2.05em;
+                margin-bottom: 22px;
             }
 
             .patch-notes-list {
@@ -935,6 +991,17 @@
             .mobile-stick-knob {
                 width: 48px;
                 height: 48px;
+            }
+
+            .mobile-aim-arc {
+                width: 128px;
+                height: 128px;
+            }
+
+            .mobile-arc-button {
+                width: 46px;
+                height: 46px;
+                font-size: 15px;
             }
         }
     </style>
@@ -1111,19 +1178,20 @@
             </div>
         </div>
         <div id="mobileHud" class="mobile-hud">
+            <button id="mobileQuitButton" class="mobile-quit-button">Quit</button>
             <div id="moveStick" class="mobile-stick mobile-stick-left">
                 <div id="moveStickKnob" class="mobile-stick-knob"></div>
             </div>
             <div id="aimStick" class="mobile-stick mobile-stick-right">
                 <div id="aimStickKnob" class="mobile-stick-knob"></div>
             </div>
-            <div class="mobile-actions">
-                <button id="mobileFireButton" class="mobile-action-button mobile-fire-button">Fire</button>
-                <button id="mobileReloadButton" class="mobile-action-button">Reload</button>
-                <button id="mobileSwapButton" class="mobile-action-button">Swap</button>
-                <button id="mobileAbilityButton" class="mobile-action-button">Ability</button>
-                <button id="mobileSharedButton" class="mobile-action-button">Shared</button>
-                <button id="mobilePassiveButton" class="mobile-action-button">Passive</button>
+            <div class="mobile-aim-arc">
+                <button id="mobileFireButton" class="mobile-arc-button mobile-arc-fire">M1</button>
+                <button id="mobileSwapButton" class="mobile-arc-button mobile-arc-q">Q</button>
+                <button id="mobileReloadButton" class="mobile-arc-button mobile-arc-r">R</button>
+                <button id="mobileAbilityButton" class="mobile-arc-button mobile-arc-e">E</button>
+                <button id="mobileSharedButton" class="mobile-arc-button mobile-arc-c">C</button>
+                <button id="mobilePassiveButton" class="mobile-arc-button mobile-arc-z">Z</button>
             </div>
         </div>
         <canvas id="canvas"></canvas>

@@ -857,31 +857,43 @@ io.on('connection', (socket) => {
         }
     };
 
+    const leaveCurrentRoom = () => {
+        const roomName = clientRooms.get(socket.id);
+        if (!roomName) {
+            return false;
+        }
+
+        cleanupSocketResources(socket.id);
+
+        if (roomName === FREE_FOR_ALL_ROOM) {
+            cleanupPlayerFromRoom(socket.id);
+            const roomState = state.get(roomName);
+            if (roomState) {
+                io.sockets.in(roomName).emit('playerLeft', {
+                    playerCount: roomState.players.length,
+                    playerId: socket.id
+                });
+            }
+            logger.info(`Player left free for all: ${socket.id}`);
+            return true;
+        }
+
+        const roomState = state.get(roomName);
+        if (roomState) {
+            io.sockets.in(roomName).emit('opponentLeft');
+        }
+        cleanupRoom(roomName);
+        logger.info(`1v1 room ended due to player leaving: ${roomName}`);
+        return true;
+    };
+
+    const handleLeaveMatch = () => {
+        leaveCurrentRoom();
+    };
+
     const handleDisconnect = () => {
         try {
-            const roomName = clientRooms.get(socket.id);
-            if (!roomName) return;
-
-            cleanupSocketResources(socket.id);
-
-            if (roomName === FREE_FOR_ALL_ROOM) {
-                cleanupPlayerFromRoom(socket.id);
-                const roomState = state.get(roomName);
-                if (roomState) {
-                    io.sockets.in(roomName).emit('playerLeft', {
-                        playerCount: roomState.players.length,
-                        playerId: socket.id
-                    });
-                }
-                logger.info(`Player left free for all: ${socket.id}`);
-            } else {
-                const roomState = state.get(roomName);
-                if (roomState) {
-                    io.sockets.in(roomName).emit('opponentLeft');
-                }
-                cleanupRoom(roomName);
-                logger.info(`1v1 room ended due to disconnect: ${roomName}`);
-            }
+            leaveCurrentRoom();
             
             healthMetrics.connections--;
             logger.info(`Client disconnected: ${socket.id}`);
@@ -908,6 +920,7 @@ io.on('connection', (socket) => {
     socket.on('changeAngle', handleChangeAngle);
     socket.on('mouseDown', handleMouseDown);
     socket.on('mouseUp', handleMouseUp);
+    socket.on('leaveMatch', handleLeaveMatch);
     socket.on('disconnect', handleDisconnect);
     socket.on('cancelSearch', handleCancelSearch);
 });

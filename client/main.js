@@ -45,6 +45,7 @@ const mobileSwapButton = document.getElementById("mobileSwapButton");
 const mobileAbilityButton = document.getElementById("mobileAbilityButton");
 const mobileSharedButton = document.getElementById("mobileSharedButton");
 const mobilePassiveButton = document.getElementById("mobilePassiveButton");
+const mobileQuitButton = document.getElementById("mobileQuitButton");
 
 const MAP_COLOR = "#d3d3d3";
 const GRID_MINOR_SIZE = 35;
@@ -359,6 +360,7 @@ function setupMobileControls() {
     setupMovementStick();
     setupAimStick();
     setupMobileActionButtons();
+    setupMobileQuitButton();
     updateMobileHudVisibility();
 }
 
@@ -512,6 +514,28 @@ function setupMobileActionButtons() {
     bindMobileTapButton(mobileAbilityButton, MOBILE_INPUT_KEYS.ability);
     bindMobileTapButton(mobileSharedButton, MOBILE_INPUT_KEYS.shared);
     bindMobileTapButton(mobilePassiveButton, MOBILE_INPUT_KEYS.passive);
+}
+
+function setupMobileQuitButton() {
+    if (!mobileQuitButton) {
+        return;
+    }
+
+    mobileQuitButton.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        if (!gameActive) {
+            return;
+        }
+
+        const shouldQuit = window.confirm('Quit current match and return to the main menu?');
+        if (!shouldQuit) {
+            return;
+        }
+
+        clearVirtualControls();
+        socket.emit('leaveMatch');
+        showMainMenu();
+    });
 }
 
 function bindMobileTapButton(button, keyCode) {
