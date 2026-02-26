@@ -979,6 +979,25 @@
                 overflow-y: auto;
             }
 
+            #characterMenu {
+                position: fixed;
+                left: 3vw;
+                right: 3vw;
+                top: max(8px, env(safe-area-inset-top));
+                bottom: max(8px, env(safe-area-inset-bottom));
+                width: auto;
+                max-width: none;
+                max-height: none;
+                margin: 0;
+                padding: 18px 14px 84px;
+                overflow-y: auto;
+                z-index: 350;
+            }
+
+            #characterMenu .equip-grid {
+                grid-template-columns: 1fr;
+            }
+
             #menu {
                 scrollbar-width: thin;
                 -ms-overflow-style: auto;
@@ -1032,6 +1051,7 @@
             .character-actions {
                 position: sticky;
                 bottom: 0;
+                padding-bottom: max(8px, env(safe-area-inset-bottom));
                 background: linear-gradient(to top, rgba(18, 52, 78, 0.9), rgba(18, 52, 78, 0));
             }
         }
