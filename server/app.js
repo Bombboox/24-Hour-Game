@@ -25,10 +25,14 @@ const SESSION_CLEANUP_INTERVAL_MS = 1000 * 60 * 30;
 const AUTH_ENDPOINT_TIMEOUT_MS = 1000 * 12;
 const DEFAULT_ELO = 500;
 const DEFAULT_BUX = 0;
+const ELO_K_FACTOR = 32;
+const MIN_ACCOUNT_ELO = 100;
+const ONE_VS_ONE_KILL_TARGET = 5;
 
 let wsApp;
 const socketsById = new Map();
 const socketState = new Map();
+const socketIdentities = new Map();
 const connectionHandlers = [];
 const responseStates = new WeakMap();
 
@@ -637,6 +641,96 @@ async function updateAccountDisplayNameBySessionToken(sessionToken, displayName)
     return sanitizeAccount(result.rows[0]);
 }
 
+function createGuestIdentity() {
+    return {
+        mode: 'guest',
+        accountId: null,
+        elo: DEFAULT_ELO,
+        effectiveElo: DEFAULT_ELO
+    };
+}
+
+function getEffectiveElo(identity) {
+    if (!identity) {
+        return DEFAULT_ELO;
+    }
+    if (identity.mode !== 'account') {
+        return DEFAULT_ELO;
+    }
+    return Number.isFinite(Number(identity.elo)) ? Number(identity.elo) : DEFAULT_ELO;
+}
+
+function calculateExpectedScore(playerElo, opponentElo) {
+    return 1 / (1 + Math.pow(10, (opponentElo - playerElo) / 400));
+}
+
+function calculateEloDelta(playerElo, opponentElo, actualScore) {
+    const expectedScore = calculateExpectedScore(playerElo, opponentElo);
+    return Math.round(ELO_K_FACTOR * (actualScore - expectedScore));
+}
+
+async function updateAccountEloById(accountId, nextElo) {
+    if (!dbPool || !accountId) {
+        return null;
+    }
+
+    const normalizedElo = Math.max(MIN_ACCOUNT_ELO, Math.round(Number(nextElo) || DEFAULT_ELO));
+    const result = await dbPool.query(
+        `
+            UPDATE accounts
+            SET elo = $1, updated_at = NOW()
+            WHERE id = $2
+            RETURNING id, email, display_name, avatar_url, bux, elo
+        `,
+        [normalizedElo, accountId]
+    );
+
+    return sanitizeAccount(result.rows[0]);
+}
+
+async function resolveSocketIdentity(socket) {
+    if (!socket) {
+        return createGuestIdentity();
+    }
+
+    const sessionToken = typeof socket.sessionToken === 'string' ? socket.sessionToken : '';
+    if (!sessionToken) {
+        socket.identityResolved = true;
+        socket.identity = createGuestIdentity();
+        socketIdentities.set(socket.id, socket.identity);
+        return socket.identity;
+    }
+
+    try {
+        const account = await getAccountBySessionToken(sessionToken);
+        if (!account) {
+            socket.identityResolved = true;
+            socket.identity = createGuestIdentity();
+            socketIdentities.set(socket.id, socket.identity);
+            return socket.identity;
+        }
+
+        socket.identityResolved = true;
+        socket.identity = {
+            mode: 'account',
+            accountId: account.id,
+            elo: Number(account.elo ?? DEFAULT_ELO),
+            effectiveElo: Number(account.elo ?? DEFAULT_ELO)
+        };
+        socketIdentities.set(socket.id, socket.identity);
+        return socket.identity;
+    } catch (_error) {
+        if (socket.identityResolved && socket.identity) {
+            socketIdentities.set(socket.id, socket.identity);
+            return socket.identity;
+        }
+        socket.identityResolved = true;
+        socket.identity = createGuestIdentity();
+        socketIdentities.set(socket.id, socket.identity);
+        return socket.identity;
+    }
+}
+
 // Health monitoring
 const healthMetrics = {
     connections: 0,
@@ -870,10 +964,12 @@ function serveClientFile(res, requestedPath) {
 function createSocketFacade(ws, socketId) {
     const handlers = new Map();
     const joinedTopics = new Set();
+    const sessionToken = ws.getUserData()?.sessionToken || '';
 
     const socket = {
         id: socketId,
         number: null,
+        sessionToken,
         emit(event, payload) {
             sendSocketPacket(ws, event, payload);
         },
@@ -926,8 +1022,12 @@ function bootstrapWebSocketRoutes() {
         idleTimeout: 30,
         upgrade(res, req, context) {
             const socketId = makeID(14);
+            const cookies = parseCookieHeader(req.getHeader('cookie'));
+            const sessionToken = typeof cookies[SESSION_COOKIE_NAME] === 'string'
+                ? cookies[SESSION_COOKIE_NAME]
+                : '';
             res.upgrade(
-                { socketId },
+                { socketId, sessionToken },
                 req.getHeader('sec-websocket-key'),
                 req.getHeader('sec-websocket-protocol'),
                 req.getHeader('sec-websocket-extensions'),
@@ -984,6 +1084,7 @@ function bootstrapWebSocketRoutes() {
 
             socketsById.delete(socketId);
             socketState.delete(socketId);
+            socketIdentities.delete(socketId);
         }
     });
 
@@ -1232,13 +1333,24 @@ function createPlayer(characterType, weaponType, secondaryWeaponType, sharedAbil
     return player;
 }
 
-function findAvailableRoom() {
+function findAvailableRoom(seekerElo = DEFAULT_ELO) {
+    let selectedRoomName = null;
+    let bestDelta = Number.POSITIVE_INFINITY;
+
     for (const [roomName, gameState] of state.entries()) {
-        if (gameState.players.length === 1 && gameState.gameMode === '1v1') {
-            return roomName;
+        if (gameState.players.length !== 1 || gameState.gameMode !== '1v1' || gameState.matchEnded) {
+            continue;
+        }
+
+        const waitingElo = Number(gameState.waitingPlayerElo ?? DEFAULT_ELO);
+        const delta = Math.abs(waitingElo - seekerElo);
+        if (delta < bestDelta) {
+            bestDelta = delta;
+            selectedRoomName = roomName;
         }
     }
-    return null;
+
+    return selectedRoomName;
 }
 
 const RANDOM_PLAYER_MIN = 3;
@@ -1276,11 +1388,120 @@ function sendFullGameState(socket, gameCode) {
     socket.emit('gameState', fullState);
 }
 
+async function finalizeOneVsOneMatch(gameCode, options = {}) {
+    const gameState = state.get(gameCode);
+    if (!gameState || gameState.gameMode !== '1v1' || gameState.matchResultEmitted) {
+        return;
+    }
+
+    const participants = gameState.players.slice(0, 2);
+    if (participants.length < 2) {
+        gameState.matchResultEmitted = true;
+        return;
+    }
+
+    const winnerId = options.winnerId || gameState.matchWinnerId;
+    if (!winnerId) {
+        return;
+    }
+
+    const loser = participants.find((player) => player.id !== winnerId);
+    const winner = participants.find((player) => player.id === winnerId);
+    if (!winner || !loser) {
+        return;
+    }
+
+    const ratingSnapshots = gameState.playerRatings || {};
+    const winnerIdentity = ratingSnapshots[winner.id] || socketIdentities.get(winner.id) || createGuestIdentity();
+    const loserIdentity = ratingSnapshots[loser.id] || socketIdentities.get(loser.id) || createGuestIdentity();
+    const winnerEloBefore = getEffectiveElo(winnerIdentity);
+    const loserEloBefore = getEffectiveElo(loserIdentity);
+
+    const winnerDeltaRaw = calculateEloDelta(winnerEloBefore, loserEloBefore, 1);
+    const loserDeltaRaw = -winnerDeltaRaw;
+    const winnerDeltaApplied = winnerIdentity.mode === 'account' ? winnerDeltaRaw : 0;
+    const loserDeltaApplied = loserIdentity.mode === 'account' ? loserDeltaRaw : 0;
+    const winnerEloAfter = winnerIdentity.mode === 'account'
+        ? Math.max(MIN_ACCOUNT_ELO, winnerEloBefore + winnerDeltaApplied)
+        : DEFAULT_ELO;
+    const loserEloAfter = loserIdentity.mode === 'account'
+        ? Math.max(MIN_ACCOUNT_ELO, loserEloBefore + loserDeltaApplied)
+        : DEFAULT_ELO;
+
+    const updates = [];
+    if (winnerIdentity.mode === 'account' && winnerIdentity.accountId) {
+        updates.push(updateAccountEloById(winnerIdentity.accountId, winnerEloAfter));
+    } else {
+        updates.push(Promise.resolve(null));
+    }
+    if (loserIdentity.mode === 'account' && loserIdentity.accountId) {
+        updates.push(updateAccountEloById(loserIdentity.accountId, loserEloAfter));
+    } else {
+        updates.push(Promise.resolve(null));
+    }
+
+    try {
+        const [winnerAccountUpdate, loserAccountUpdate] = await Promise.all(updates);
+        if (winnerAccountUpdate && socketIdentities.has(winner.id)) {
+            const updatedIdentity = {
+                ...socketIdentities.get(winner.id),
+                elo: Number(winnerAccountUpdate.elo ?? winnerEloAfter),
+                effectiveElo: Number(winnerAccountUpdate.elo ?? winnerEloAfter)
+            };
+            socketIdentities.set(winner.id, updatedIdentity);
+            const winnerSocketState = socketState.get(winner.id);
+            if (winnerSocketState?.socket) {
+                winnerSocketState.socket.identityResolved = true;
+                winnerSocketState.socket.identity = updatedIdentity;
+            }
+        }
+        if (loserAccountUpdate && socketIdentities.has(loser.id)) {
+            const updatedIdentity = {
+                ...socketIdentities.get(loser.id),
+                elo: Number(loserAccountUpdate.elo ?? loserEloAfter),
+                effectiveElo: Number(loserAccountUpdate.elo ?? loserEloAfter)
+            };
+            socketIdentities.set(loser.id, updatedIdentity);
+            const loserSocketState = socketState.get(loser.id);
+            if (loserSocketState?.socket) {
+                loserSocketState.socket.identityResolved = true;
+                loserSocketState.socket.identity = updatedIdentity;
+            }
+        }
+    } catch (error) {
+        logger.warn('Failed to update Elo ratings', { error: error.message, gameCode });
+    }
+
+    const targetKills = gameState.matchTargetKills || ONE_VS_ONE_KILL_TARGET;
+    const reason = options.reason || gameState.matchEndReason || 'elimination';
+    for (const participant of participants) {
+        const isWinner = participant.id === winner.id;
+        const yourIdentity = isWinner ? winnerIdentity : loserIdentity;
+        const yourDelta = isWinner ? winnerDeltaApplied : loserDeltaApplied;
+        const yourEloAfter = isWinner ? winnerEloAfter : loserEloAfter;
+        const opponentEloBefore = isWinner ? loserEloBefore : winnerEloBefore;
+        io.to(participant.id).emit('matchEnded', {
+            winnerId: winner.id,
+            youWon: isWinner,
+            yourKills: participant.kills,
+            opponentKills: participants.find((p) => p.id !== participant.id)?.kills ?? 0,
+            targetKills,
+            reason,
+            rated: yourIdentity.mode === 'account',
+            eloDelta: yourDelta,
+            newElo: yourIdentity.mode === 'account' ? yourEloAfter : DEFAULT_ELO,
+            opponentElo: opponentEloBefore
+        });
+    }
+
+    gameState.matchResultEmitted = true;
+}
+
 io.on('connection', (socket) => {
     healthMetrics.connections++;
     logger.info(`Client connected: ${socket.id}`);
 
-    const handleFindGame = (data) => {
+    const handleFindGame = async (data) => {
         try {
             if (isRateLimited(socket.id, 'findGame')) {
                 socket.emit('error', 'Rate limit exceeded. Please try again later.');
@@ -1292,7 +1513,8 @@ io.on('connection', (socket) => {
                 return;
             }
             
-            let roomName = findAvailableRoom();
+            const identity = await resolveSocketIdentity(socket);
+            let roomName = findAvailableRoom(identity.effectiveElo);
             
             if (roomName) {
                 clientRooms.set(socket.id, roomName);
@@ -1300,7 +1522,16 @@ io.on('connection', (socket) => {
                 socket.number = 2;
                 
                 const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, data?.sharedAbilityType, 2, socket.id);
-                state.get(roomName).players.push(player);
+                const roomState = state.get(roomName);
+                roomState.players.push(player);
+                roomState.playerRatings = roomState.playerRatings || {};
+                roomState.playerRatings[socket.id] = {
+                    mode: identity.mode,
+                    accountId: identity.accountId || null,
+                    elo: identity.effectiveElo,
+                    effectiveElo: identity.effectiveElo
+                };
+                delete roomState.waitingPlayerElo;
                 
                 socket.emit('init', 2);
                 socket.emit('gameFound', roomName);
@@ -1318,6 +1549,15 @@ io.on('connection', (socket) => {
                 state.set(roomName, createGameState());
                 state.get(roomName).obstacles = generateNewMap();
                 state.get(roomName).gameMode = '1v1';
+                state.get(roomName).playerRatings = {
+                    [socket.id]: {
+                        mode: identity.mode,
+                        accountId: identity.accountId || null,
+                        elo: identity.effectiveElo,
+                        effectiveElo: identity.effectiveElo
+                    }
+                };
+                state.get(roomName).waitingPlayerElo = identity.effectiveElo;
                 gameStateCaches.set(roomName, new GameStateCache());
                 
                 const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, data?.sharedAbilityType, 1, socket.id);
@@ -1450,15 +1690,14 @@ io.on('connection', (socket) => {
         }
     };
 
-    const leaveCurrentRoom = () => {
+    const leaveCurrentRoom = async () => {
         const roomName = clientRooms.get(socket.id);
         if (!roomName) {
             return false;
         }
 
-        cleanupSocketResources(socket.id);
-
         if (roomName === FREE_FOR_ALL_ROOM) {
+            cleanupSocketResources(socket.id);
             cleanupPlayerFromRoom(socket.id);
             const roomState = state.get(roomName);
             if (roomState) {
@@ -1472,21 +1711,40 @@ io.on('connection', (socket) => {
         }
 
         const roomState = state.get(roomName);
-        if (roomState) {
+        if (roomState && roomState.gameMode === '1v1' && roomState.players.length >= 2 && !roomState.matchEnded) {
+            const winner = roomState.players.find((player) => player.id !== socket.id);
+            if (winner) {
+                roomState.matchEnded = true;
+                roomState.matchWinnerId = winner.id;
+                roomState.matchTargetKills = ONE_VS_ONE_KILL_TARGET;
+                roomState.matchEndReason = 'forfeit';
+                roomState.cacheReset = true;
+                await finalizeOneVsOneMatch(roomName, {
+                    winnerId: winner.id,
+                    reason: 'forfeit'
+                });
+            }
+        } else if (roomState) {
             io.sockets.in(roomName).emit('opponentLeft');
         }
+
+        cleanupSocketResources(socket.id);
         cleanupRoom(roomName);
         logger.info(`1v1 room ended due to player leaving: ${roomName}`);
         return true;
     };
 
     const handleLeaveMatch = () => {
-        leaveCurrentRoom();
+        leaveCurrentRoom().catch((error) => {
+            logger.error('Error while leaving match', error);
+        });
     };
 
     const handleDisconnect = () => {
         try {
-            leaveCurrentRoom();
+            leaveCurrentRoom().catch((error) => {
+                logger.error('Error while disconnecting from match', error);
+            });
             
             healthMetrics.connections--;
             logger.info(`Client disconnected: ${socket.id}`);
@@ -1542,6 +1800,21 @@ function startGameInterval(gameCode) {
         // Use worker thread for heavy computations if needed
         gameLoop(gameState, deltaTime, io);
         emitGameState(gameCode, gameState);
+
+        if (
+            gameState.gameMode === '1v1' &&
+            gameState.matchEnded &&
+            !gameState.matchResultEmitted &&
+            !gameState.matchResultProcessing
+        ) {
+            gameState.matchResultProcessing = true;
+            finalizeOneVsOneMatch(gameCode, {
+                winnerId: gameState.matchWinnerId,
+                reason: gameState.matchEndReason || 'elimination'
+            }).catch((error) => {
+                logger.error('Error finalizing 1v1 match', error);
+            });
+        }
 
         if (
             gameState.gameMode === '1v1' &&

@@ -533,6 +533,32 @@
             text-align: center;
         }
 
+        .leave-match-button {
+            position: absolute;
+            left: 20px;
+            top: 108px;
+            z-index: 130;
+            min-width: 88px;
+            height: 40px;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            border-radius: 999px;
+            background: linear-gradient(45deg, rgba(202, 58, 58, 0.94), rgba(141, 22, 22, 0.95));
+            color: #ffffff;
+            font-family: 'CustomFont', 'Arial', sans-serif;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+            cursor: pointer;
+        }
+
+        @media (pointer: coarse) {
+            .leave-match-button {
+                display: none;
+            }
+        }
+
         .register-status {
             color: rgba(233, 246, 255, 0.95);
             font-size: 13px;
@@ -549,7 +575,7 @@
 
         .menu-logout-button {
             width: auto;
-            margin: 0 auto 14px;
+            margin: 8px auto 14px;
             padding: 10px 16px;
             font-size: 12px;
             border-radius: 10px;
@@ -1361,12 +1387,12 @@
 
     <div id="menu">
         <h1>Boox Shoot</h1>
-        <button id="logoutButton" class="menu-button cancel-button menu-logout-button" onclick="logoutToAuthChoice()">Log out</button>
         <button class="menu-button" onclick="startGame()">1v1 Match</button>
         <button class="menu-button ffa-button" onclick="startFreeForAll()">Free For All</button>
         <button class="menu-button character-button" onclick="showCharacter()">Character</button>
         <button class="menu-button" onclick="showControls()">Controls</button>
         <button id="installButton" class="menu-button">Install App</button>
+        <button id="logoutButton" class="menu-button cancel-button menu-logout-button" onclick="logoutToAuthChoice()">Log out</button>
         <div class="patch-notes-card">
             <div class="patch-notes-header">
                 <span>Patch Notes</span>
@@ -1490,6 +1516,7 @@
     </div>
     
     <div id="gameScreen">
+        <button id="leaveMatchButton" class="leave-match-button">Leave</button>
         <div class="health-bar-container" id="healthBar">
             <div class="health-label">Health</div>
             <div class="health-bar">
@@ -1534,7 +1561,7 @@
             <div class="match-end-card" id="matchEndCard">
                 <div class="match-end-title" id="matchEndTitle">Victory</div>
                 <div class="match-end-score" id="matchEndScore">5 - 3</div>
-                <div class="match-end-subtitle">Returning to menu...</div>
+                <div id="matchEndSubtitle" class="match-end-subtitle">Returning to menu...</div>
             </div>
         </div>
         <div id="mobileHud" class="mobile-hud">

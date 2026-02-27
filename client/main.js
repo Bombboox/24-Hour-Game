@@ -33,6 +33,7 @@ const matchEndOverlay = document.getElementById("matchEndOverlay");
 const matchEndCard = document.getElementById("matchEndCard");
 const matchEndTitle = document.getElementById("matchEndTitle");
 const matchEndScore = document.getElementById("matchEndScore");
+const matchEndSubtitle = document.getElementById("matchEndSubtitle");
 const secondaryWeaponName = document.getElementById("secondaryWeaponName");
 const patchNotesList = document.getElementById("patchNotesList");
 const patchNotesVersion = document.getElementById("patchNotesVersion");
@@ -48,6 +49,7 @@ const mobileAbilityButton = document.getElementById("mobileAbilityButton");
 const mobileSharedButton = document.getElementById("mobileSharedButton");
 const mobilePassiveButton = document.getElementById("mobilePassiveButton");
 const mobileQuitButton = document.getElementById("mobileQuitButton");
+const leaveMatchButton = document.getElementById("leaveMatchButton");
 const registerStatus = document.getElementById("registerStatus");
 const googleSignInButton = document.getElementById("googleSignInButton");
 const logoutButton = document.getElementById("logoutButton");
@@ -158,6 +160,18 @@ class WebSocketGameClient {
 
         this.pendingPackets.push(encoded);
     }
+
+    reconnect() {
+        this.id = null;
+        try {
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.close();
+            }
+        } catch (_error) {
+            // ignore close failures and still attempt reconnect
+        }
+        this.connect();
+    }
 }
 
 const socket = new WebSocketGameClient();
@@ -241,6 +255,7 @@ var gameActive = false;
 var gameMode = '1v1'; // Track current game mode
 const ONE_VS_ONE_KILL_TARGET = 5;
 let matchEndTimeout = null;
+let forfeitReturnTimeout = null;
 const SCORE_POPUP_VISIBLE_MS = 2600;
 const SCORE_POPUP_FADE_MS = 900;
 let scorePopupShownAt = 0;
@@ -297,6 +312,7 @@ initializeMenuBackdrop();
 registerServiceWorker();
 setupPwaInstallButton();
 setupMobileControls();
+setupDesktopLeaveButton();
 initializeAuth();
 
 function sanitizePlayerSettings(settings) {
@@ -549,6 +565,7 @@ async function handleGoogleCredentialResponse(response) {
         authState.account = payload.account || null;
         authState.initialized = true;
         authState.mode = 'account';
+        socket.reconnect();
         updateRegisterUi();
         updateMainMenuTopActions();
         updateAccountSummaryUi();
@@ -753,6 +770,7 @@ async function logoutToAuthChoice() {
     authState.mode = null;
     authState.authenticated = false;
     authState.account = null;
+    socket.reconnect();
     updateRegisterUi();
     updateMainMenuTopActions();
     updateAccountSummaryUi();
@@ -922,19 +940,48 @@ function setupMobileQuitButton() {
 
     mobileQuitButton.addEventListener('pointerdown', (event) => {
         event.preventDefault();
-        if (!gameActive) {
-            return;
-        }
-
-        const shouldQuit = window.confirm('Quit current match and return to the main menu?');
-        if (!shouldQuit) {
-            return;
-        }
-
-        clearVirtualControls();
-        socket.emit('leaveMatch');
-        showMainMenu();
+        requestLeaveMatch();
     });
+}
+
+function setupDesktopLeaveButton() {
+    if (!leaveMatchButton) {
+        return;
+    }
+
+    leaveMatchButton.addEventListener('click', () => {
+        requestLeaveMatch();
+    });
+}
+
+function requestLeaveMatch() {
+    if (!gameActive) {
+        return;
+    }
+
+    const shouldQuit = window.confirm('Quit current match and return to the main menu?');
+    if (!shouldQuit) {
+        return;
+    }
+
+    clearVirtualControls();
+    clearLocalInputState();
+    socket.emit('leaveMatch');
+
+    if (gameMode === '1v1') {
+        gameActive = false;
+        updateMobileHudVisibility();
+        if (forfeitReturnTimeout) {
+            clearTimeout(forfeitReturnTimeout);
+        }
+        // Fallback in case the matchEnded packet is missed.
+        forfeitReturnTimeout = setTimeout(() => {
+            showMainMenu();
+        }, 3000);
+        return;
+    }
+
+    showMainMenu();
 }
 
 function bindMobileHoldKeyButton(button, keyCode) {
@@ -1122,6 +1169,9 @@ function showMainMenu() {
     soundManager.stop('laser');
     matchEndOverlay.classList.remove('show');
     matchEndCard.classList.remove('victory', 'defeat');
+    if (matchEndSubtitle) {
+        matchEndSubtitle.textContent = 'Returning to menu...';
+    }
     if (matchEndTimeout) {
         clearTimeout(matchEndTimeout);
         matchEndTimeout = null;
@@ -3155,10 +3205,40 @@ function handleCombatText(data) {
 function handleMatchEnded(data) {
     if (!data) return;
 
+    if (forfeitReturnTimeout) {
+        clearTimeout(forfeitReturnTimeout);
+        forfeitReturnTimeout = null;
+    }
+
     gameActive = false;
     soundManager.stop('laser');
     matchEndTitle.textContent = data.youWon ? 'Victory' : 'Defeat';
     matchEndScore.textContent = `${data.yourKills || 0} - ${data.opponentKills || 0}`;
+    if (matchEndSubtitle) {
+        let subtitle = 'Returning to menu...';
+        if (data.reason === 'forfeit') {
+            subtitle = data.youWon ? 'Opponent forfeited.' : 'Forfeit counted as a loss.';
+        }
+
+        const hasEloDelta = Number.isFinite(Number(data.eloDelta));
+        if (hasEloDelta) {
+            const eloDelta = Number(data.eloDelta);
+            const deltaText = eloDelta > 0 ? `+${eloDelta}` : `${eloDelta}`;
+            const newElo = Number(data.newElo);
+            const eloSuffix = Number.isFinite(newElo) ? ` (${newElo})` : '';
+            subtitle = `${subtitle} Elo ${deltaText}${eloSuffix}.`;
+
+            if (authState.mode === 'account' && authState.account) {
+                authState.account.elo = Number.isFinite(newElo)
+                    ? newElo
+                    : Number(authState.account.elo || 500) + eloDelta;
+                updateAccountSummaryUi();
+            }
+        } else if (data.rated === false) {
+            subtitle = `${subtitle} Guest rating stays at 500.`;
+        }
+        matchEndSubtitle.textContent = subtitle;
+    }
     matchEndCard.classList.remove('victory', 'defeat');
     matchEndCard.classList.add(data.youWon ? 'victory' : 'defeat');
     matchEndCard.style.animation = 'none';
@@ -3176,6 +3256,10 @@ function handleMatchEnded(data) {
 }
 
 function handleMatchClosed() {
+    if (forfeitReturnTimeout) {
+        clearTimeout(forfeitReturnTimeout);
+        forfeitReturnTimeout = null;
+    }
     soundManager.stop('laser');
     showMainMenu();
 }

@@ -367,8 +367,32 @@ function gameLoop(gameState, deltaTime, io) {
         if (player.HP <= 0) {
             const killerId = player.lastDamagedBy;
             const killerPlayer = gameState.players.find(p => p.id === killerId);
+            const opponentPlayer = gameState.gameMode === '1v1'
+                ? gameState.players.find((p) => p.id !== player.id)
+                : null;
 
-            if (killerPlayer && killerPlayer.id !== player.id) {
+            if (gameState.gameMode === '1v1' && opponentPlayer) {
+                opponentPlayer.kills++;
+                if (opponentPlayer.passiveAbility) {
+                    opponentPlayer.passiveAbility.onKill(opponentPlayer, player, gameState);
+                }
+                io.to(opponentPlayer.id).emit('kill', {
+                    killedPlayer: player.name,
+                    killCount: opponentPlayer.kills
+                });
+
+                if (
+                    opponentPlayer.kills >= ONE_VS_ONE_KILL_TARGET &&
+                    !gameState.matchEnded
+                ) {
+                    gameState.matchEnded = true;
+                    gameState.matchWinnerId = opponentPlayer.id;
+                    gameState.matchTargetKills = ONE_VS_ONE_KILL_TARGET;
+                    gameState.matchEndReason = 'elimination';
+                    gameState.cacheReset = true;
+                    break;
+                }
+            } else if (killerPlayer && killerPlayer.id !== player.id) {
                 killerPlayer.kills++;
                 if (killerPlayer.passiveAbility) {
                     killerPlayer.passiveAbility.onKill(killerPlayer, player, gameState);
@@ -377,28 +401,6 @@ function gameLoop(gameState, deltaTime, io) {
                     killedPlayer: player.name,
                     killCount: killerPlayer.kills
                 });
-
-                if (
-                    gameState.gameMode !== 'freeForAll' &&
-                    killerPlayer.kills >= ONE_VS_ONE_KILL_TARGET &&
-                    !gameState.matchEnded
-                ) {
-                    gameState.matchEnded = true;
-                    gameState.matchWinnerId = killerPlayer.id;
-                    gameState.matchTargetKills = ONE_VS_ONE_KILL_TARGET;
-                    gameState.cacheReset = true;
-
-                    for (const participant of gameState.players) {
-                        io.to(participant.id).emit('matchEnded', {
-                            winnerId: killerPlayer.id,
-                            youWon: participant.id === killerPlayer.id,
-                            yourKills: participant.kills,
-                            opponentKills: gameState.players.find((p) => p.id !== participant.id)?.kills ?? 0,
-                            targetKills: ONE_VS_ONE_KILL_TARGET
-                        });
-                    }
-                    break;
-                }
             }
 
             if (gameState.gameMode === 'freeForAll') {
