@@ -1,7 +1,10 @@
+require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const uWS = require('uWebSockets.js');
 const msgpack = require('msgpack-lite');
+const { Pool } = require('pg');
 const { createGameState, gameLoop, generateNewMap } = require('./game');
 const { Berserker, Ninja, King, Demoman, Reaver } = require('./character');
 const { M4, Sniper, Pistol, Shotgun, LaserGun, Taser, RocketLauncher, BubbleLauncher } = require('./weapon');
@@ -15,11 +18,21 @@ let port = process.env.PORT || 443;
 const CLIENT_ROOT = path.resolve(__dirname, '../client');
 const TOPIC_USER_PREFIX = 'user:';
 const TOPIC_ROOM_PREFIX = 'room:';
+const SESSION_COOKIE_NAME = 'boox_session';
+const SESSION_DURATION_MS = 1000 * 60 * 60 * 24 * 7;
+const SESSION_TOKEN_BYTES = 32;
+const SESSION_CLEANUP_INTERVAL_MS = 1000 * 60 * 30;
+const AUTH_ENDPOINT_TIMEOUT_MS = 1000 * 12;
+const DEFAULT_ELO = 500;
+const DEFAULT_BUX = 0;
 
 let wsApp;
 const socketsById = new Map();
 const socketState = new Map();
 const connectionHandlers = [];
+const responseStates = new WeakMap();
+
+let dbPool = null;
 
 const serializerWorker = new Worker(path.join(__dirname, 'serializationWorker.js'));
 let nextSerializationJobId = 1;
@@ -207,6 +220,423 @@ const logger = {
     }
 };
 
+function isProduction() {
+    return process.env.NODE_ENV === 'production';
+}
+
+function parseCookieHeader(cookieHeader = '') {
+    if (!cookieHeader) {
+        return {};
+    }
+
+    return cookieHeader
+        .split(';')
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .reduce((acc, part) => {
+            const separatorIndex = part.indexOf('=');
+            if (separatorIndex <= 0) {
+                return acc;
+            }
+
+            const key = part.slice(0, separatorIndex).trim();
+            const value = part.slice(separatorIndex + 1).trim();
+            acc[key] = value;
+            return acc;
+        }, {});
+}
+
+function createSessionCookieValue(sessionToken) {
+    const attributes = [
+        `${SESSION_COOKIE_NAME}=${sessionToken}`,
+        'Path=/',
+        'HttpOnly',
+        'SameSite=Lax',
+        `Max-Age=${Math.floor(SESSION_DURATION_MS / 1000)}`
+    ];
+
+    if (isProduction()) {
+        attributes.push('Secure');
+    }
+
+    return attributes.join('; ');
+}
+
+function createClearSessionCookieValue() {
+    const attributes = [
+        `${SESSION_COOKIE_NAME}=`,
+        'Path=/',
+        'HttpOnly',
+        'SameSite=Lax',
+        'Max-Age=0'
+    ];
+
+    if (isProduction()) {
+        attributes.push('Secure');
+    }
+
+    return attributes.join('; ');
+}
+
+function hashSessionToken(sessionToken) {
+    return crypto.createHash('sha256').update(sessionToken).digest('hex');
+}
+
+function generateSessionToken() {
+    return crypto.randomBytes(SESSION_TOKEN_BYTES).toString('base64url');
+}
+
+function getResponseState(res) {
+    let state = responseStates.get(res);
+    if (state) {
+        return state;
+    }
+
+    state = {
+        aborted: false,
+        completed: false,
+        abortListeners: []
+    };
+    responseStates.set(res, state);
+
+    res.onAborted(() => {
+        state.aborted = true;
+        const listeners = state.abortListeners.splice(0, state.abortListeners.length);
+        for (const listener of listeners) {
+            try {
+                listener();
+            } catch (_error) {
+                // Ignore listener errors to avoid crashing abort path.
+            }
+        }
+    });
+
+    return state;
+}
+
+function onResponseAborted(res, callback) {
+    const state = getResponseState(res);
+    if (state.aborted) {
+        callback();
+        return () => {};
+    }
+
+    state.abortListeners.push(callback);
+    return () => {
+        const index = state.abortListeners.indexOf(callback);
+        if (index >= 0) {
+            state.abortListeners.splice(index, 1);
+        }
+    };
+}
+
+function createJsonResponse(res, status, payload, extraHeaders = []) {
+    const state = getResponseState(res);
+    if (state.aborted || state.completed) {
+        return;
+    }
+
+    const body = JSON.stringify(payload);
+    try {
+        res.cork(() => {
+            if (state.aborted || state.completed) {
+                return;
+            }
+            res.writeStatus(status);
+            res.writeHeader('Content-Type', 'application/json; charset=utf-8');
+            for (const [key, value] of extraHeaders) {
+                res.writeHeader(key, value);
+            }
+            res.end(body);
+            state.completed = true;
+        });
+    } catch (_error) {
+        // If response was already aborted/completed, ignore to keep server alive.
+    }
+}
+
+function readJsonBody(res, maxBytes = 32 * 1024) {
+    return new Promise((resolve, reject) => {
+        const state = getResponseState(res);
+        let buffer = Buffer.alloc(0);
+        let completed = false;
+
+        const detachAbortListener = onResponseAborted(res, () => {
+            if (!completed) {
+                completed = true;
+                reject(new Error('Request aborted'));
+            }
+        });
+
+        res.onData((chunk, isLast) => {
+            if (state.aborted || completed) {
+                return;
+            }
+
+            const dataChunk = Buffer.from(chunk);
+            if (buffer.length + dataChunk.length > maxBytes) {
+                completed = true;
+                reject(new Error('Payload too large'));
+                return;
+            }
+
+            buffer = Buffer.concat([buffer, dataChunk]);
+
+            if (!isLast) {
+                return;
+            }
+
+            completed = true;
+            detachAbortListener();
+
+            if (buffer.length === 0) {
+                resolve({});
+                return;
+            }
+
+            try {
+                resolve(JSON.parse(buffer.toString('utf8')));
+            } catch (error) {
+                reject(new Error('Invalid JSON'));
+            }
+        });
+    });
+}
+
+function getDatabaseConfig() {
+    return {
+        host: process.env.DB_HOST || '127.0.0.1',
+        port: Number(process.env.DB_PORT || 5432),
+        user: process.env.DB_USER || 'postgres',
+        password: process.env.DB_PASSWORD || '',
+        database: process.env.DB_NAME || 'boox_shoot',
+        max: Number(process.env.DB_CONNECTION_LIMIT || 10),
+        idleTimeoutMillis: 30_000
+    };
+}
+
+async function initializeDatabase() {
+    try {
+        dbPool = new Pool(getDatabaseConfig());
+        await dbPool.query('SELECT 1');
+        await dbPool.query(`
+            CREATE TABLE IF NOT EXISTS accounts (
+                id BIGSERIAL PRIMARY KEY,
+                google_sub VARCHAR(191) NOT NULL UNIQUE,
+                email VARCHAR(320) NOT NULL,
+                display_name VARCHAR(120) NULL,
+                avatar_url TEXT NULL,
+                bux INTEGER NOT NULL DEFAULT 0,
+                elo INTEGER NOT NULL DEFAULT 500,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        `);
+        await dbPool.query(`
+            ALTER TABLE accounts
+            ALTER COLUMN display_name DROP NOT NULL
+        `);
+        await dbPool.query(`
+            CREATE TABLE IF NOT EXISTS account_sessions (
+                id BIGSERIAL PRIMARY KEY,
+                account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                token_hash CHAR(64) NOT NULL UNIQUE,
+                expires_at TIMESTAMPTZ NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        `);
+        await dbPool.query(`
+            CREATE INDEX IF NOT EXISTS idx_account_sessions_account_id
+            ON account_sessions (account_id)
+        `);
+        await dbPool.query(`
+            CREATE INDEX IF NOT EXISTS idx_account_sessions_expires_at
+            ON account_sessions (expires_at)
+        `);
+
+        await cleanupExpiredSessions();
+        logger.info('PostgreSQL auth tables ready');
+    } catch (error) {
+        dbPool = null;
+        logger.error('Failed to initialize PostgreSQL pool', error);
+    }
+}
+
+async function cleanupExpiredSessions() {
+    if (!dbPool) {
+        return;
+    }
+
+    try {
+        await dbPool.query('DELETE FROM account_sessions WHERE expires_at <= NOW()');
+    } catch (error) {
+        logger.warn('Failed cleaning expired sessions', { error: error.message });
+    }
+}
+
+function sanitizeAccount(accountRow) {
+    if (!accountRow) {
+        return null;
+    }
+
+    return {
+        id: accountRow.id,
+        email: accountRow.email,
+        displayName: accountRow.display_name,
+        avatarUrl: accountRow.avatar_url,
+        bux: Number(accountRow.bux ?? DEFAULT_BUX),
+        elo: Number(accountRow.elo ?? DEFAULT_ELO)
+    };
+}
+
+function normalizeDisplayName(value) {
+    if (typeof value !== 'string') {
+        return '';
+    }
+
+    return value.trim().replace(/\s+/g, ' ');
+}
+
+function isValidDisplayName(displayName) {
+    if (displayName.length < 3 || displayName.length > 24) {
+        return false;
+    }
+
+    return /^[A-Za-z0-9 _\-]+$/.test(displayName);
+}
+
+function getGoogleClientId() {
+    return (process.env.GOOGLE_CLIENT_ID || '').trim();
+}
+
+async function verifyGoogleIdToken(idToken) {
+    const googleClientId = getGoogleClientId();
+    if (!googleClientId) {
+        throw new Error('GOOGLE_CLIENT_ID is not configured');
+    }
+
+    const url = `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), AUTH_ENDPOINT_TIMEOUT_MS);
+
+    try {
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) {
+            throw new Error('Google token verification failed');
+        }
+
+        const data = await response.json();
+        const issuerValid = data.iss === 'https://accounts.google.com' || data.iss === 'accounts.google.com';
+        const audienceValid = data.aud === googleClientId;
+        const expiresAt = Number(data.exp || 0) * 1000;
+        const notExpired = Number.isFinite(expiresAt) && expiresAt > Date.now();
+        const emailVerified = data.email_verified === 'true' || data.email_verified === true;
+
+        if (!issuerValid || !audienceValid || !notExpired || !emailVerified || !data.sub || !data.email) {
+            throw new Error('Invalid Google token claims');
+        }
+
+        return {
+            sub: data.sub,
+            email: data.email,
+            displayName: data.name || data.email,
+            picture: data.picture || null
+        };
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function upsertGoogleAccount(profile) {
+    if (!dbPool) {
+        throw new Error('Database unavailable');
+    }
+
+    const rows = await dbPool.query(
+        `
+            INSERT INTO accounts (google_sub, email, display_name, avatar_url, bux, elo, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, NOW())
+            ON CONFLICT (google_sub) DO UPDATE SET
+                email = EXCLUDED.email,
+                avatar_url = EXCLUDED.avatar_url,
+                updated_at = NOW()
+            RETURNING id, email, display_name, avatar_url, bux, elo
+        `,
+        [profile.sub, profile.email, null, profile.picture, DEFAULT_BUX, DEFAULT_ELO]
+    );
+
+    return sanitizeAccount(rows.rows[0]);
+}
+
+async function createSessionForAccount(accountId) {
+    if (!dbPool) {
+        throw new Error('Database unavailable');
+    }
+
+    const token = generateSessionToken();
+    const tokenHash = hashSessionToken(token);
+    const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
+
+    await dbPool.query(
+        `INSERT INTO account_sessions (account_id, token_hash, expires_at) VALUES ($1, $2, $3)`,
+        [accountId, tokenHash, expiresAt]
+    );
+
+    return token;
+}
+
+async function getAccountBySessionToken(sessionToken) {
+    if (!dbPool || !sessionToken) {
+        return null;
+    }
+
+    const tokenHash = hashSessionToken(sessionToken);
+    const rows = await dbPool.query(
+        `
+            SELECT a.id, a.email, a.display_name, a.avatar_url, a.bux, a.elo
+            FROM account_sessions AS s
+            INNER JOIN accounts AS a ON a.id = s.account_id
+            WHERE s.token_hash = $1 AND s.expires_at > NOW()
+            LIMIT 1
+        `,
+        [tokenHash]
+    );
+
+    return sanitizeAccount(rows.rows[0]);
+}
+
+async function invalidateSession(sessionToken) {
+    if (!dbPool || !sessionToken) {
+        return;
+    }
+
+    const tokenHash = hashSessionToken(sessionToken);
+    await dbPool.query(`DELETE FROM account_sessions WHERE token_hash = $1`, [tokenHash]);
+}
+
+async function updateAccountDisplayNameBySessionToken(sessionToken, displayName) {
+    if (!dbPool || !sessionToken) {
+        return null;
+    }
+
+    const tokenHash = hashSessionToken(sessionToken);
+    const result = await dbPool.query(
+        `
+            UPDATE accounts AS a
+            SET display_name = $1, updated_at = NOW()
+            FROM account_sessions AS s
+            WHERE s.token_hash = $2
+              AND s.expires_at > NOW()
+              AND s.account_id = a.id
+              AND a.display_name IS NULL
+            RETURNING a.id, a.email, a.display_name, a.avatar_url, a.bux, a.elo
+        `,
+        [displayName, tokenHash]
+    );
+
+    return sanitizeAccount(result.rows[0]);
+}
+
 // Health monitoring
 const healthMetrics = {
     connections: 0,
@@ -330,6 +760,12 @@ setInterval(() => {
     cleanupRateLimitStore();
     updateHealthMetrics();
 }, 60000);
+
+setInterval(() => {
+    cleanupExpiredSessions().catch((error) => {
+        logger.warn('Session cleanup interval failed', { error: error.message });
+    });
+}, SESSION_CLEANUP_INTERVAL_MS);
 
 const ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 const ID_CHARS_LENGTH = ID_CHARS.length;
@@ -573,6 +1009,163 @@ function bootstrapWebSocketRoutes() {
             res.writeHeader('Content-Type', 'application/json; charset=utf-8');
             res.end(payload);
         });
+    });
+
+    wsApp.get('/api/auth/config', (res) => {
+        createJsonResponse(res, '200 OK', {
+            googleClientId: getGoogleClientId()
+        });
+    });
+
+    wsApp.get('/api/auth/me', async (res, req) => {
+        const responseState = getResponseState(res);
+
+        try {
+            const cookies = parseCookieHeader(req.getHeader('cookie'));
+            const sessionToken = cookies[SESSION_COOKIE_NAME];
+            const account = await getAccountBySessionToken(sessionToken);
+            if (responseState.aborted) {
+                return;
+            }
+            createJsonResponse(res, '200 OK', {
+                authenticated: Boolean(account),
+                account
+            });
+        } catch (error) {
+            if (responseState.aborted) {
+                return;
+            }
+            logger.error('Failed getting auth session', error);
+            createJsonResponse(res, '500 Internal Server Error', { error: 'Failed to load session' });
+        }
+    });
+
+    wsApp.post('/api/auth/google', async (res) => {
+        const responseState = getResponseState(res);
+
+        try {
+            if (!dbPool) {
+                createJsonResponse(res, '503 Service Unavailable', { error: 'Authentication unavailable' });
+                return;
+            }
+
+            const body = await readJsonBody(res);
+            if (responseState.aborted) {
+                return;
+            }
+            const idToken = typeof body.idToken === 'string' ? body.idToken.trim() : '';
+            if (!idToken) {
+                createJsonResponse(res, '400 Bad Request', { error: 'Missing Google ID token' });
+                return;
+            }
+
+            const profile = await verifyGoogleIdToken(idToken);
+            const account = await upsertGoogleAccount(profile);
+            const sessionToken = await createSessionForAccount(account.id);
+            if (responseState.aborted) {
+                return;
+            }
+
+            createJsonResponse(
+                res,
+                '200 OK',
+                { authenticated: true, account },
+                [['Set-Cookie', createSessionCookieValue(sessionToken)]]
+            );
+        } catch (error) {
+            if (responseState.aborted) {
+                return;
+            }
+            logger.warn('Google auth failed', { error: error.message });
+            createJsonResponse(res, '401 Unauthorized', { error: 'Authentication failed' });
+        }
+    });
+
+    wsApp.post('/api/auth/logout', async (res, req) => {
+        const responseState = getResponseState(res);
+
+        try {
+            const cookies = parseCookieHeader(req.getHeader('cookie'));
+            const sessionToken = cookies[SESSION_COOKIE_NAME];
+            await invalidateSession(sessionToken);
+            if (responseState.aborted) {
+                return;
+            }
+            createJsonResponse(
+                res,
+                '200 OK',
+                { success: true },
+                [['Set-Cookie', createClearSessionCookieValue()]]
+            );
+        } catch (error) {
+            if (responseState.aborted) {
+                return;
+            }
+            logger.warn('Logout failed', { error: error.message });
+            createJsonResponse(res, '500 Internal Server Error', { error: 'Logout failed' });
+        }
+    });
+
+    wsApp.post('/api/account/display-name', async (res, req) => {
+        const responseState = getResponseState(res);
+
+        try {
+            const cookies = parseCookieHeader(req.getHeader('cookie'));
+            const sessionToken = cookies[SESSION_COOKIE_NAME];
+            if (!sessionToken) {
+                createJsonResponse(res, '401 Unauthorized', { error: 'Authentication required' });
+                return;
+            }
+
+            // Attach request body listener immediately for uWS POST handling.
+            const bodyPromise = readJsonBody(res);
+
+            const currentAccount = await getAccountBySessionToken(sessionToken);
+            if (responseState.aborted) {
+                return;
+            }
+
+            if (!currentAccount) {
+                createJsonResponse(res, '401 Unauthorized', { error: 'Authentication required' });
+                return;
+            }
+
+            if (normalizeDisplayName(currentAccount.displayName || '')) {
+                createJsonResponse(res, '409 Conflict', { error: 'Display name is already set and cannot be changed' });
+                return;
+            }
+
+            const body = await bodyPromise;
+            if (responseState.aborted) {
+                return;
+            }
+
+            const displayName = normalizeDisplayName(body?.displayName);
+            if (!isValidDisplayName(displayName)) {
+                createJsonResponse(res, '400 Bad Request', {
+                    error: 'Display name must be 3-24 chars and use letters, numbers, spaces, _ or -'
+                });
+                return;
+            }
+
+            const account = await updateAccountDisplayNameBySessionToken(sessionToken, displayName);
+            if (responseState.aborted) {
+                return;
+            }
+
+            if (!account) {
+                createJsonResponse(res, '409 Conflict', { error: 'Display name is already set and cannot be changed' });
+                return;
+            }
+
+            createJsonResponse(res, '200 OK', { success: true, account });
+        } catch (error) {
+            if (responseState.aborted) {
+                return;
+            }
+            logger.warn('Display name update failed', { error: error.message });
+            createJsonResponse(res, '500 Internal Server Error', { error: 'Failed to update display name' });
+        }
     });
 
     wsApp.get('/*', (res, req) => {
@@ -1010,6 +1603,9 @@ function emitGameState(gameCode, gameState) {
     });
 }
 
+initializeDatabase().catch((error) => {
+    logger.error('Database initialization failed', error);
+});
 initializeWebServer();
 bootstrapWebSocketRoutes();
 

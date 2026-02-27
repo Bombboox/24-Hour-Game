@@ -2,6 +2,9 @@ const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d")
 const menuBackdropCanvas = document.getElementById("menuBackdrop");
 const menuBackdropCtx = menuBackdropCanvas ? menuBackdropCanvas.getContext("2d") : null;
+const authChoiceMenu = document.getElementById("authChoiceMenu");
+const registerMenu = document.getElementById("registerMenu");
+const displayNameMenu = document.getElementById("displayNameMenu");
 const menu = document.getElementById("menu");
 const characterMenu = document.getElementById("characterMenu");
 const searchingMenu = document.getElementById("searchingMenu");
@@ -45,6 +48,14 @@ const mobileAbilityButton = document.getElementById("mobileAbilityButton");
 const mobileSharedButton = document.getElementById("mobileSharedButton");
 const mobilePassiveButton = document.getElementById("mobilePassiveButton");
 const mobileQuitButton = document.getElementById("mobileQuitButton");
+const registerStatus = document.getElementById("registerStatus");
+const googleSignInButton = document.getElementById("googleSignInButton");
+const logoutButton = document.getElementById("logoutButton");
+const displayNameInput = document.getElementById("displayNameInput");
+const displayNameStatus = document.getElementById("displayNameStatus");
+const accountSummary = document.getElementById("accountSummary");
+const accountSummaryName = document.getElementById("accountSummaryName");
+const accountSummaryStats = document.getElementById("accountSummaryStats");
 
 const MAP_COLOR = "#d3d3d3";
 const GRID_MINOR_SIZE = 35;
@@ -240,6 +251,14 @@ let menuBackdropAnimationId = null;
 let menuBackdropLastTime = 0;
 let menuBackdropLastDrawTime = 0;
 let deferredInstallPrompt = null;
+let authState = {
+    initialized: false,
+    authenticated: false,
+    account: null,
+    googleClientId: '',
+    googleButtonRendered: false,
+    mode: null
+};
 const MOBILE_INPUT_KEYS = {
     up: 87,
     down: 83,
@@ -278,6 +297,7 @@ initializeMenuBackdrop();
 registerServiceWorker();
 setupPwaInstallButton();
 setupMobileControls();
+initializeAuth();
 
 function sanitizePlayerSettings(settings) {
     const characterType = VALID_CHARACTERS.includes(settings?.characterType) ? settings.characterType : 'berserker';
@@ -361,6 +381,382 @@ function setupMobileControls() {
     setupMobileActionButtons();
     setupMobileQuitButton();
     updateMobileHudVisibility();
+}
+
+function escapeHtml(value) {
+    return `${value ?? ''}`
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function updateRegisterUi() {
+    if (!registerStatus || !googleSignInButton) {
+        return;
+    }
+
+    if (!authState.initialized) {
+        registerStatus.textContent = 'Loading register options...';
+        return;
+    }
+
+    if (!authState.googleClientId) {
+        registerStatus.textContent = 'Google sign-in unavailable. Missing GOOGLE_CLIENT_ID.';
+        return;
+    }
+
+    if (authState.authenticated && authState.account) {
+        const account = authState.account;
+        if (normalizeDisplayName(account.displayName || '')) {
+            registerStatus.textContent = `Signed in as ${account.displayName}.`;
+        } else {
+            registerStatus.textContent = 'Signed in. You must create a display name to continue.';
+        }
+        return;
+    }
+
+    registerStatus.textContent = 'Register options:';
+}
+
+function updateMainMenuTopActions() {
+    const inPlayableMode = authState.mode === 'account' || authState.mode === 'guest';
+
+    if (logoutButton) {
+        logoutButton.style.display = inPlayableMode ? 'inline-block' : 'none';
+    }
+}
+
+function hasDisplayName() {
+    return Boolean(normalizeDisplayName(authState.account?.displayName || ''));
+}
+
+function updateAccountSummaryUi() {
+    if (!accountSummary || !accountSummaryName || !accountSummaryStats) {
+        return;
+    }
+
+    if (authState.mode === 'account' && authState.account) {
+        accountSummary.style.display = 'block';
+        accountSummaryName.textContent = authState.account.displayName || 'Unnamed';
+        accountSummaryStats.textContent = `Elo: ${Number(authState.account.elo || 500)} | Bux: ${Number(authState.account.bux || 0)}`;
+        return;
+    }
+
+    accountSummary.style.display = 'none';
+}
+
+function normalizeDisplayName(value) {
+    if (typeof value !== 'string') {
+        return '';
+    }
+
+    return value.trim().replace(/\s+/g, ' ');
+}
+
+function isValidDisplayName(value) {
+    if (value.length < 3 || value.length > 24) {
+        return false;
+    }
+
+    return /^[A-Za-z0-9 _\-]+$/.test(value);
+}
+
+async function fetchAuthConfig() {
+    const response = await fetch('/api/auth/config');
+    if (!response.ok) {
+        throw new Error('Failed to load auth config');
+    }
+
+    return response.json();
+}
+
+async function fetchCurrentSession() {
+    const response = await fetch('/api/auth/me');
+    if (!response.ok) {
+        throw new Error('Failed to load session');
+    }
+
+    return response.json();
+}
+
+function renderGoogleSignInButton() {
+    if (authState.googleButtonRendered || !googleSignInButton) {
+        return;
+    }
+
+    if (!window.google?.accounts?.id || !authState.googleClientId) {
+        return;
+    }
+
+    window.google.accounts.id.initialize({
+        client_id: authState.googleClientId,
+        callback: handleGoogleCredentialResponse,
+        auto_select: false
+    });
+
+    googleSignInButton.innerHTML = '';
+    window.google.accounts.id.renderButton(googleSignInButton, {
+        theme: 'filled_blue',
+        size: 'large',
+        width: 260,
+        text: 'signin_with'
+    });
+
+    authState.googleButtonRendered = true;
+}
+
+function scheduleGoogleButtonRenderAttempts() {
+    let attempts = 0;
+    const maxAttempts = 20;
+    const timer = setInterval(() => {
+        attempts += 1;
+        renderGoogleSignInButton();
+        if (authState.googleButtonRendered || attempts >= maxAttempts) {
+            clearInterval(timer);
+        }
+    }, 300);
+}
+
+async function handleGoogleCredentialResponse(response) {
+    const idToken = response?.credential;
+    if (!idToken) {
+        Toastify({
+            text: 'Google login failed. Please try again.',
+            duration: 2600,
+            gravity: 'top',
+            position: 'right'
+        }).showToast();
+        return;
+    }
+
+    try {
+        const authResponse = await fetch('/api/auth/google', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ idToken })
+        });
+
+        const payload = await authResponse.json().catch(() => ({}));
+        if (!authResponse.ok) {
+            throw new Error(payload?.error || 'Authentication failed');
+        }
+
+        authState.authenticated = true;
+        authState.account = payload.account || null;
+        authState.initialized = true;
+        authState.mode = 'account';
+        updateRegisterUi();
+        updateMainMenuTopActions();
+        updateAccountSummaryUi();
+        showMainMenu();
+
+        Toastify({
+            text: 'Signed in successfully.',
+            duration: 2200,
+            gravity: 'top',
+            position: 'right'
+        }).showToast();
+    } catch (error) {
+        Toastify({
+            text: escapeHtml(error.message || 'Authentication failed'),
+            duration: 3200,
+            gravity: 'top',
+            position: 'right'
+        }).showToast();
+    }
+}
+
+async function initializeAuth() {
+    updateRegisterUi();
+
+    try {
+        const [config, session] = await Promise.all([fetchAuthConfig(), fetchCurrentSession()]);
+        authState.googleClientId = typeof config.googleClientId === 'string' ? config.googleClientId : '';
+        authState.authenticated = Boolean(session?.authenticated && session?.account);
+        authState.account = session?.account || null;
+        authState.initialized = true;
+        authState.mode = authState.authenticated ? 'account' : null;
+        updateRegisterUi();
+        updateMainMenuTopActions();
+        updateAccountSummaryUi();
+        renderGoogleSignInButton();
+        if (!authState.googleButtonRendered) {
+            scheduleGoogleButtonRenderAttempts();
+        }
+
+        if (authState.authenticated) {
+            showMainMenu();
+        } else {
+            showAuthChoiceMenu();
+        }
+    } catch (_error) {
+        authState.initialized = true;
+        authState.authenticated = false;
+        authState.account = null;
+        authState.mode = null;
+        updateRegisterUi();
+        updateMainMenuTopActions();
+        updateAccountSummaryUi();
+        Toastify({
+            text: 'Auth setup unavailable. Check server config.',
+            duration: 3500,
+            gravity: 'top',
+            position: 'right'
+        }).showToast();
+        showAuthChoiceMenu();
+    }
+}
+
+function continueAsGuest() {
+    authState.mode = 'guest';
+    updateMainMenuTopActions();
+    updateAccountSummaryUi();
+    showMainMenu();
+}
+
+function showAuthChoiceMenu() {
+    hideAllMenus();
+    gameScreen.style.display = 'none';
+    if (authChoiceMenu) {
+        authChoiceMenu.style.display = 'block';
+    }
+    if (menuLink) {
+        menuLink.style.display = 'none';
+    }
+}
+
+function showRegisterMenu() {
+    hideAllMenus();
+    if (registerMenu) {
+        registerMenu.style.display = 'block';
+    }
+    updateRegisterUi();
+    renderGoogleSignInButton();
+    if (!authState.googleButtonRendered) {
+        scheduleGoogleButtonRenderAttempts();
+    }
+}
+
+function showDisplayNameMenu() {
+    if (authState.mode !== 'account' || !authState.account) {
+        return;
+    }
+
+    hideAllMenus();
+    if (displayNameMenu) {
+        displayNameMenu.style.display = 'block';
+    }
+
+    if (displayNameInput) {
+        displayNameInput.value = authState.account.displayName || '';
+        const locked = hasDisplayName();
+        displayNameInput.disabled = locked;
+        if (!locked) {
+            displayNameInput.focus();
+            displayNameInput.select();
+        }
+    }
+
+    if (displayNameStatus) {
+        if (hasDisplayName()) {
+            displayNameStatus.textContent = 'Display name is already set and cannot be changed.';
+        } else {
+            displayNameStatus.textContent = 'Display name is required to continue.';
+        }
+    }
+}
+
+async function saveDisplayName() {
+    if (authState.mode !== 'account') {
+        return;
+    }
+
+    if (hasDisplayName()) {
+        if (displayNameStatus) {
+            displayNameStatus.textContent = 'Display name is already set and cannot be changed.';
+        }
+        return;
+    }
+
+    const nextName = normalizeDisplayName(displayNameInput?.value || '');
+    if (!isValidDisplayName(nextName)) {
+        if (displayNameStatus) {
+            displayNameStatus.textContent = 'Invalid name. Use 3-24 chars: letters, numbers, spaces, _ or -';
+        }
+        return;
+    }
+
+    if (displayNameStatus) {
+        displayNameStatus.textContent = 'Saving...';
+    }
+
+    let timeout = null;
+    try {
+        const controller = new AbortController();
+        timeout = setTimeout(() => controller.abort(), 10000);
+        const response = await fetch('/api/account/display-name', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ displayName: nextName }),
+            signal: controller.signal
+        });
+
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload?.error || 'Failed to save display name');
+        }
+
+        if (payload?.account) {
+            authState.account = payload.account;
+        }
+        updateRegisterUi();
+        updateMainMenuTopActions();
+        updateAccountSummaryUi();
+
+        if (displayNameStatus) {
+            displayNameStatus.textContent = 'Saved.';
+        }
+
+        Toastify({
+            text: 'Display name updated.',
+            duration: 2200,
+            gravity: 'top',
+            position: 'right'
+        }).showToast();
+        showMainMenu();
+    } catch (error) {
+        if (displayNameStatus) {
+            displayNameStatus.textContent = error?.name === 'AbortError'
+                ? 'Request timed out. Please try again.'
+                : (error.message || 'Failed to save display name');
+        }
+    } finally {
+        if (timeout) {
+            clearTimeout(timeout);
+        }
+    }
+}
+
+async function logoutToAuthChoice() {
+    try {
+        await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (_error) {
+        // local logout state still applies.
+    }
+
+    authState.mode = null;
+    authState.authenticated = false;
+    authState.account = null;
+    updateRegisterUi();
+    updateMainMenuTopActions();
+    updateAccountSummaryUi();
+    showAuthChoiceMenu();
 }
 
 function setupMovementStick() {
@@ -666,6 +1062,7 @@ function main() {
     socket.on('combatText', handleCombatText);
     socket.on('matchEnded', handleMatchEnded);
     socket.on('matchClosed', handleMatchClosed);
+    socket.on('error', handleServerError);
 
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('keyup', handleKeyUp);
@@ -678,19 +1075,43 @@ function main() {
 }
 
 function hideAllMenus() {
+    if (authChoiceMenu) {
+        authChoiceMenu.style.display = 'none';
+    }
+    if (registerMenu) {
+        registerMenu.style.display = 'none';
+    }
+    if (displayNameMenu) {
+        displayNameMenu.style.display = 'none';
+    }
     menu.style.display = 'none';
     characterMenu.style.display = 'none';
     searchingMenu.style.display = 'none';
     controlsMenu.style.display = 'none';
+    if (accountSummary) {
+        accountSummary.style.display = 'none';
+    }
     if (menuLink) {
         menuLink.style.display = 'none';
     }
 }
 
 function showMainMenu() {
+    if (!authState.mode) {
+        showAuthChoiceMenu();
+        return;
+    }
+
+    if (authState.mode === 'account' && !hasDisplayName()) {
+        showDisplayNameMenu();
+        return;
+    }
+
     hideAllMenus();
     gameScreen.style.display = 'none';
     menu.style.display = 'block';
+    updateMainMenuTopActions();
+    updateAccountSummaryUi();
     if (menuLink) {
         menuLink.style.display = 'flex';
     }
@@ -2757,4 +3178,17 @@ function handleMatchEnded(data) {
 function handleMatchClosed() {
     soundManager.stop('laser');
     showMainMenu();
+}
+
+function handleServerError(message) {
+    const text = typeof message === 'string' && message.trim() ? message : 'Server error';
+    Toastify({
+        text: escapeHtml(text),
+        duration: 3200,
+        gravity: "top",
+        position: "right",
+        style: {
+            background: "linear-gradient(to right, #a11a1a, #d64545)"
+        }
+    }).showToast();
 }

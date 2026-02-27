@@ -383,7 +383,7 @@
             pointer-events: none;
         }
         
-        #menu, #characterMenu, #searchingMenu, #controlsMenu {
+        #authChoiceMenu, #registerMenu, #displayNameMenu, #menu, #characterMenu, #searchingMenu, #controlsMenu {
             text-align: center;
             padding: 60px 40px;
             background: rgba(0, 174, 255, 0.452);
@@ -437,11 +437,11 @@
             padding: 44px 28px;
         }
         
-        #characterMenu, #searchingMenu, #controlsMenu {
+        #registerMenu, #displayNameMenu, #menu, #characterMenu, #searchingMenu, #controlsMenu {
             display: none;
         }
 
-        #menu h1, #characterMenu h1, #searchingMenu h1, #controlsMenu h1 {
+        #authChoiceMenu h1, #registerMenu h1, #displayNameMenu h1, #menu h1, #characterMenu h1, #searchingMenu h1, #controlsMenu h1 {
             margin-bottom: 40px;
             color: white;
             font-size: 2.5em;
@@ -522,6 +522,113 @@
             height: 100%;
             background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
             transition: left 0.5s;
+        }
+
+        .register-panel {
+            margin-bottom: 20px;
+            padding: 16px 14px;
+            border-radius: 12px;
+            background: rgba(8, 18, 30, 0.55);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            text-align: center;
+        }
+
+        .register-status {
+            color: rgba(233, 246, 255, 0.95);
+            font-size: 13px;
+            margin-bottom: 10px;
+            line-height: 1.4;
+        }
+
+        #googleSignInButton {
+            min-height: 40px;
+            display: flex;
+            justify-content: center;
+            margin: 0 auto;
+        }
+
+        .menu-logout-button {
+            width: auto;
+            margin: 0 auto 14px;
+            padding: 10px 16px;
+            font-size: 12px;
+            border-radius: 10px;
+            letter-spacing: 0.4px;
+            display: none;
+        }
+
+        .display-name-panel {
+            margin-bottom: 16px;
+            text-align: left;
+        }
+
+        .display-name-label {
+            color: rgba(240, 248, 255, 0.95);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.7px;
+            margin-bottom: 8px;
+        }
+
+        .display-name-input {
+            width: 100%;
+            padding: 12px 14px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            background: rgba(7, 16, 27, 0.58);
+            color: #ffffff;
+            font-family: 'CustomFont', 'Arial', sans-serif;
+            font-size: 15px;
+            box-sizing: border-box;
+            outline: none;
+        }
+
+        .display-name-input:focus {
+            border-color: rgba(122, 223, 255, 0.95);
+            box-shadow: 0 0 0 2px rgba(56, 196, 255, 0.35);
+        }
+
+        .display-name-help {
+            margin-top: 8px;
+            color: rgba(224, 239, 250, 0.86);
+            font-size: 12px;
+        }
+
+        .display-name-status {
+            margin-top: 10px;
+            min-height: 18px;
+            color: #e8f7ff;
+            font-size: 12px;
+        }
+
+        .account-summary {
+            position: fixed;
+            left: 14px;
+            bottom: max(14px, env(safe-area-inset-bottom));
+            z-index: 260;
+            min-width: 200px;
+            max-width: 280px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(10, 22, 35, 0.82);
+            color: #ecf7ff;
+            padding: 12px 14px;
+            box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
+            backdrop-filter: blur(8px);
+            display: none;
+        }
+
+        .account-summary-name {
+            font-size: 14px;
+            font-weight: 700;
+            margin-bottom: 5px;
+            color: #ffffff;
+            letter-spacing: 0.3px;
+        }
+
+        .account-summary-stats {
+            font-size: 12px;
+            color: rgba(220, 240, 255, 0.95);
         }
         
         .menu-button:hover::before {
@@ -960,7 +1067,7 @@
                 padding-bottom: max(8px, env(safe-area-inset-bottom));
             }
 
-            #menu, #characterMenu, #searchingMenu, #controlsMenu {
+            #authChoiceMenu, #registerMenu, #displayNameMenu, #menu, #characterMenu, #searchingMenu, #controlsMenu {
                 width: min(94vw, 400px);
                 padding: 42px 20px;
                 max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)));
@@ -1015,7 +1122,7 @@
                 display: none;
             }
 
-            #menu h1, #characterMenu h1, #searchingMenu h1, #controlsMenu h1 {
+            #authChoiceMenu h1, #registerMenu h1, #displayNameMenu h1, #menu h1, #characterMenu h1, #searchingMenu h1, #controlsMenu h1 {
                 font-size: 2.05em;
                 margin-bottom: 22px;
             }
@@ -1156,7 +1263,7 @@
         }
 
         @media (hover: none) and (pointer: coarse) and (max-height: 820px) {
-            #characterMenu, #searchingMenu, #controlsMenu {
+            #registerMenu, #displayNameMenu, #characterMenu, #searchingMenu, #controlsMenu {
                 max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)));
                 padding: 28px 16px;
             }
@@ -1165,7 +1272,7 @@
                 padding: clamp(14px, 2.6vh, 22px) 16px;
             }
 
-            #menu h1, #characterMenu h1, #searchingMenu h1, #controlsMenu h1 {
+            #authChoiceMenu h1, #registerMenu h1, #displayNameMenu h1, #menu h1, #characterMenu h1, #searchingMenu h1, #controlsMenu h1 {
                 font-size: 1.8em;
                 margin-bottom: 14px;
             }
@@ -1237,8 +1344,24 @@
     </a>
     <canvas id="menuBackdrop"></canvas>
 
+    <div id="authChoiceMenu">
+        <h1>Welcome</h1>
+        <button class="menu-button" onclick="continueAsGuest()">Play as Guest</button>
+        <button class="menu-button character-button" onclick="showRegisterMenu()">Register / Login</button>
+    </div>
+
+    <div id="registerMenu">
+        <h1>Register</h1>
+        <div class="register-panel">
+            <div id="registerStatus" class="register-status">Loading register options...</div>
+            <div id="googleSignInButton"></div>
+        </div>
+        <button class="menu-button cancel-button" onclick="showAuthChoiceMenu()">Back</button>
+    </div>
+
     <div id="menu">
         <h1>Boox Shoot</h1>
+        <button id="logoutButton" class="menu-button cancel-button menu-logout-button" onclick="logoutToAuthChoice()">Log out</button>
         <button class="menu-button" onclick="startGame()">1v1 Match</button>
         <button class="menu-button ffa-button" onclick="startFreeForAll()">Free For All</button>
         <button class="menu-button character-button" onclick="showCharacter()">Character</button>
@@ -1251,6 +1374,22 @@
             </div>
             <ul id="patchNotesList" class="patch-notes-list"></ul>
         </div>
+    </div>
+
+    <div id="displayNameMenu">
+        <h1>Display Name</h1>
+        <div class="display-name-panel">
+            <div class="display-name-label">Choose your public name</div>
+            <input id="displayNameInput" class="display-name-input" type="text" maxlength="24" placeholder="Enter display name" />
+            <div class="display-name-help">3-24 characters. Letters, numbers, spaces, _ and - only.</div>
+            <div id="displayNameStatus" class="display-name-status"></div>
+        </div>
+        <button class="menu-button" onclick="saveDisplayName()">Save Name</button>
+    </div>
+
+    <div id="accountSummary" class="account-summary">
+        <div id="accountSummaryName" class="account-summary-name"></div>
+        <div id="accountSummaryStats" class="account-summary-stats"></div>
     </div>
     
     <div id="characterMenu">
@@ -1417,6 +1556,7 @@
         <canvas id="canvas"></canvas>
     </div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/SoundJS/1.0.2/soundjs.min.js" integrity="sha512-tWGC9KCH7gq1wgk/ZwaX1kd7bQq8M8ekETvWy0Mk8d9+d9XWHR4F3CuzbPJnUnu/eyEX/rPyYguXHtvN6WzcRQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/msgpack-lite/0.1.26/msgpack.min.js"></script>
     <script src="patchNotes.js"></script>
