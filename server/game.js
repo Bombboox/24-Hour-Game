@@ -3,6 +3,9 @@ const { Bullet } = require('./bullet');
 const { Obstacle } = require('./obstacle');
 const { MAP_RADIUS } = require('./constants');
 const ONE_VS_ONE_KILL_TARGET = 5;
+const TWO_VS_TWO_TEAM_LIVES = 10;
+const TWO_VS_TWO_RESPAWN_DELAY = 75; // 3 seconds (delta units)
+const TWO_VS_TWO_INVULNERABLE_DURATION = 75; // 3 seconds (delta units)
 const FORCE_STUN_THRESHOLD = 0.15;
 const FORCE_STUN_DURATION = 12.5;
 const REAVER_STACK_TIMEOUT = 200;
@@ -15,13 +18,58 @@ function createGameState() {
         grenades: [],
         obstacles: [],
         gameMode: '1v1',
+        teamLives: null
     }
+}
+
+function ensureTwoVsTwoState(gameState) {
+    if (!gameState.teamLives) {
+        gameState.teamLives = {
+            red: TWO_VS_TWO_TEAM_LIVES,
+            blue: TWO_VS_TWO_TEAM_LIVES
+        };
+    }
+}
+
+function getOpposingTeam(team) {
+    return team === 'red' ? 'blue' : 'red';
+}
+
+function startTwoVsTwoRespawn(player) {
+    player.isRespawning = true;
+    player.respawnTimer = TWO_VS_TWO_RESPAWN_DELAY;
+    player.invulnerableTimer = 0;
+    player.invisible = false;
+    player.opacity = 0;
+    player.isFiring = false;
+    player.lastDamagedBy = null;
+}
+
+function respawnTwoVsTwoPlayer(player, gameState) {
+    if (player.team === 'red') {
+        player.spawnX = -MAP_RADIUS + 90;
+        player.spawnY = Math.random() < 0.5 ? -80 : 80;
+    } else {
+        player.spawnX = MAP_RADIUS - 90;
+        player.spawnY = Math.random() < 0.5 ? -80 : 80;
+    }
+
+    player.respawn();
+    player.isRespawning = false;
+    player.respawnTimer = 0;
+    player.invulnerableTimer = TWO_VS_TWO_INVULNERABLE_DURATION;
+    player.opacity = 1;
+    gameState.cacheReset = true;
 }
 
 function gameLoop(gameState, deltaTime, io) {
     gameState.io = io;
     if (gameState.matchEnded) {
         return;
+    }
+
+    if (gameState.gameMode === '2v2') {
+        ensureTwoVsTwoState(gameState);
     }
 
     let shouldRespawnAll = false;
@@ -52,12 +100,25 @@ function gameLoop(gameState, deltaTime, io) {
         if ((player.kingAuraPulseTimer || 0) > 0) {
             player.kingAuraPulseTimer = Math.max(0, player.kingAuraPulseTimer - deltaTime);
         }
+        if ((player.invulnerableTimer || 0) > 0) {
+            player.invulnerableTimer = Math.max(0, player.invulnerableTimer - deltaTime);
+        }
         if ((player.reaverStackDecayTimer || 0) > 0) {
             player.reaverStackDecayTimer = Math.max(0, player.reaverStackDecayTimer - deltaTime);
             if (player.reaverStackDecayTimer <= 0) {
                 player.reaverStacks = 0;
                 player.reaverSourceId = null;
             }
+        }
+
+        if (player.isRespawning) {
+            player.respawnTimer = Math.max(0, (player.respawnTimer || 0) - deltaTime);
+            player.isFiring = false;
+            player.opacity = 0;
+            if (player.respawnTimer <= 0 && gameState.gameMode === '2v2' && !gameState.matchEnded) {
+                respawnTwoVsTwoPlayer(player, gameState);
+            }
+            continue;
         }
         if (player.reaverDotEffects?.length) {
             const dotDamagePerSecond = 5;
@@ -286,6 +347,16 @@ function gameLoop(gameState, deltaTime, io) {
             if (bullet.playerId === player.id) continue;
 
             const hitter = bullet.playerId;
+            const hitterPlayer = gameState.players.find((p) => p.id === hitter);
+            if (
+                gameState.gameMode === '2v2' &&
+                hitterPlayer &&
+                hitterPlayer.team &&
+                player.team &&
+                hitterPlayer.team === player.team
+            ) {
+                continue;
+            }
 
             if (bullet.kind !== 'bubble') {
                 let blockedByBubble = false;
@@ -316,13 +387,13 @@ function gameLoop(gameState, deltaTime, io) {
                 const hpBeforeDamage = player.HP;
                 player.takeDamage(bullet.damage, hitter);
                 const damageDealt = Math.max(0, hpBeforeDamage - player.HP);
-                if (bullet.stunDuration > 0) {
+                if (damageDealt > 0 && bullet.stunDuration > 0) {
                     player.stunnedTimer = Math.max(player.stunnedTimer || 0, bullet.stunDuration);
                 }
                 bullet.destroy(gameState);
-                io.to(hitter).emit('hit');
-                io.to(player.id).emit('gotHit');
                 if (damageDealt > 0 && hitter) {
+                    io.to(hitter).emit('hit');
+                    io.to(player.id).emit('gotHit');
                     io.to(hitter).emit('combatText', {
                         type: 'damage',
                         amount: damageDealt,
@@ -342,8 +413,9 @@ function gameLoop(gameState, deltaTime, io) {
                         });
                     }
                 }
-            
-                player.flashingTimer = 1;
+                if (damageDealt > 0) {
+                    player.flashingTimer = 1;
+                }
             }
 
             if (bullet.kind === 'reaverShard' && player.checkCircleCircleCollision(player.x, player.y, player.radius, bullet.x, bullet.y, bullet.radius)) {
@@ -371,7 +443,36 @@ function gameLoop(gameState, deltaTime, io) {
                 ? gameState.players.find((p) => p.id !== player.id)
                 : null;
 
-            if (gameState.gameMode === '1v1' && opponentPlayer) {
+            if (gameState.gameMode === '2v2') {
+                const victimTeam = player.team === 'blue' ? 'blue' : 'red';
+                const lives = gameState.teamLives || { red: TWO_VS_TWO_TEAM_LIVES, blue: TWO_VS_TWO_TEAM_LIVES };
+                lives[victimTeam] = Math.max(0, Number(lives[victimTeam] || 0) - 1);
+                gameState.teamLives = lives;
+
+                if (killerPlayer && killerPlayer.id !== player.id) {
+                    killerPlayer.kills++;
+                    if (killerPlayer.passiveAbility) {
+                        killerPlayer.passiveAbility.onKill(killerPlayer, player, gameState);
+                    }
+                    io.to(killerPlayer.id).emit('kill', {
+                        killedPlayer: player.name,
+                        killCount: killerPlayer.kills
+                    });
+                }
+
+                if (lives[victimTeam] <= 0 && !gameState.matchEnded) {
+                    gameState.matchEnded = true;
+                    gameState.matchWinnerTeam = getOpposingTeam(victimTeam);
+                    gameState.matchEndReason = 'elimination';
+                    gameState.cacheReset = true;
+                    break;
+                }
+
+                startTwoVsTwoRespawn(player);
+                player.lastDamagedBy = null;
+                gameState.cacheReset = true;
+                continue;
+            } else if (gameState.gameMode === '1v1' && opponentPlayer) {
                 opponentPlayer.kills++;
                 if (opponentPlayer.passiveAbility) {
                     opponentPlayer.passiveAbility.onKill(opponentPlayer, player, gameState);
@@ -523,5 +624,6 @@ function generateNewMap() {
 module.exports = {
     createGameState,
     gameLoop,
-    generateNewMap
+    generateNewMap,
+    TWO_VS_TWO_TEAM_LIVES
 }

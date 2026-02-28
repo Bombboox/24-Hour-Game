@@ -122,8 +122,17 @@ class GrenadeProjectile {
     }
 
     collidesWithPlayer(players = []) {
+        const owner = players.find((player) => player.id === this.ownerId);
         for (const player of players) {
             if (player.id === this.ownerId) continue;
+            if (
+                owner &&
+                owner.team &&
+                player.team &&
+                owner.team === player.team
+            ) {
+                continue;
+            }
             const dx = player.x - this.x;
             const dy = player.y - this.y;
             const radiusSum = player.radius + this.radius;
@@ -141,6 +150,15 @@ class GrenadeProjectile {
 
         for (const player of gameState.players) {
             if (player.id === this.ownerId) continue;
+            if (
+                gameState.gameMode === '2v2' &&
+                owner &&
+                owner.team &&
+                player.team &&
+                owner.team === player.team
+            ) {
+                continue;
+            }
             const dx = player.x - this.x;
             const dy = player.y - this.y;
             const distance = Math.sqrt(dx * dx + dy * dy);
@@ -294,6 +312,17 @@ class DemoExplosive {
         const owner = gameState.players.find((p) => p.id === this.ownerId);
 
         for (const player of gameState.players) {
+            if (
+                gameState.gameMode === '2v2' &&
+                owner &&
+                owner.team &&
+                player.team &&
+                owner.team === player.team &&
+                player.id !== this.ownerId
+            ) {
+                continue;
+            }
+
             const dx = player.x - this.x;
             const dy = player.y - this.y;
             const distance = Math.sqrt(dx * dx + dy * dy);

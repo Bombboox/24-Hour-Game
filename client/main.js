@@ -6,9 +6,14 @@ const authChoiceMenu = document.getElementById("authChoiceMenu");
 const registerMenu = document.getElementById("registerMenu");
 const displayNameMenu = document.getElementById("displayNameMenu");
 const menu = document.getElementById("menu");
+const mainMenuContent = document.getElementById("mainMenuContent");
+const playMenuContent = document.getElementById("playMenuContent");
 const characterMenu = document.getElementById("characterMenu");
 const searchingMenu = document.getElementById("searchingMenu");
 const controlsMenu = document.getElementById("controlsMenu");
+const oneVsOneModeIndicator = document.getElementById("oneVsOneModeIndicator");
+const twoVsTwoModeIndicator = document.getElementById("twoVsTwoModeIndicator");
+const freeForAllModeIndicator = document.getElementById("freeForAllModeIndicator");
 const menuLink = document.querySelector(".menu-link");
 const gameScreen = document.getElementById("gameScreen");
 const healthBar = document.getElementById("healthBar");
@@ -29,6 +34,9 @@ const passiveAbilityKey = document.getElementById("passiveAbilityKey");
 const passiveAbilityContainer = document.getElementById("passiveAbilityContainer");
 const killProgressContainer = document.getElementById("killProgressContainer");
 const killProgressText = document.getElementById("killProgressText");
+const killProgressTitle = killProgressContainer
+    ? killProgressContainer.querySelector('.kill-progress-title')
+    : null;
 const matchEndOverlay = document.getElementById("matchEndOverlay");
 const matchEndCard = document.getElementById("matchEndCard");
 const matchEndTitle = document.getElementById("matchEndTitle");
@@ -50,6 +58,10 @@ const mobileSharedButton = document.getElementById("mobileSharedButton");
 const mobilePassiveButton = document.getElementById("mobilePassiveButton");
 const mobileQuitButton = document.getElementById("mobileQuitButton");
 const leaveMatchButton = document.getElementById("leaveMatchButton");
+const chatContainer = document.getElementById("chatContainer");
+const chatToggleButton = document.getElementById("chatToggleButton");
+const chatMessages = document.getElementById("chatMessages");
+const chatInput = document.getElementById("chatInput");
 const registerStatus = document.getElementById("registerStatus");
 const googleSignInButton = document.getElementById("googleSignInButton");
 const logoutButton = document.getElementById("logoutButton");
@@ -67,6 +79,14 @@ const GRID_MAJOR_COLOR = "rgba(255, 255, 255, 0.21)";
 const MENU_BACKDROP_SPRITES = ["King", "Ninja", "Berserker", "Demoman", "Reaver"];
 const MENU_BACKDROP_ACTOR_COUNT = 8;
 const MENU_BACKDROP_FPS = 24;
+const MODE_STATUS_REFRESH_MS = 5000;
+const CHAT_IDLE_FADE_MS = 7000;
+const CHAT_MAX_MESSAGES = 60;
+const MOVEMENT_KEY_CODES = [87, 83, 65, 68];
+const TEAM_COLORS = Object.freeze({
+    red: 'rgba(255, 72, 72, 0.42)',
+    blue: 'rgba(86, 158, 255, 0.42)'
+});
 
 const playerImages = {
     King: new Image(),
@@ -181,7 +201,9 @@ var gameState = {
     bullets: [],
     grenades: [],
     obstacles: [],
+    teamLives: null,
 }
+let latestTeamLives = null;
 const SNAPSHOT_BUFFER_SIZE = 90;
 const RENDER_INTERPOLATION_DELAY_MS = 120;
 const MAX_RENDER_INTERPOLATION_DELAY_MS = 240;
@@ -266,6 +288,9 @@ let menuBackdropAnimationId = null;
 let menuBackdropLastTime = 0;
 let menuBackdropLastDrawTime = 0;
 let deferredInstallPrompt = null;
+let modeStatusRefreshTimer = null;
+let chatFadeTimer = null;
+let chatHiddenByUser = false;
 let authState = {
     initialized: false,
     authenticated: false,
@@ -313,6 +338,8 @@ registerServiceWorker();
 setupPwaInstallButton();
 setupMobileControls();
 setupDesktopLeaveButton();
+setupChatUi();
+setupModeStatusRefresh();
 initializeAuth();
 
 function sanitizePlayerSettings(settings) {
@@ -442,6 +469,236 @@ function updateMainMenuTopActions() {
     if (logoutButton) {
         logoutButton.style.display = inPlayableMode ? 'inline-block' : 'none';
     }
+}
+
+function setMainMenuView(view) {
+    if (mainMenuContent) {
+        mainMenuContent.style.display = view === 'play' ? 'none' : 'block';
+    }
+
+    if (playMenuContent) {
+        playMenuContent.style.display = view === 'play' ? 'block' : 'none';
+    }
+}
+
+function formatModeIndicator(modeStatus) {
+    const queued = Number(modeStatus?.queued || 0);
+    const playing = Number(modeStatus?.playing || 0);
+    return `Queued: ${queued} | Playing: ${playing}`;
+}
+
+function applyModeStatus(status) {
+    if (oneVsOneModeIndicator) {
+        oneVsOneModeIndicator.textContent = formatModeIndicator(status?.oneVsOne);
+    }
+
+    if (twoVsTwoModeIndicator) {
+        twoVsTwoModeIndicator.textContent = formatModeIndicator(status?.twoVsTwo);
+    }
+
+    if (freeForAllModeIndicator) {
+        freeForAllModeIndicator.textContent = formatModeIndicator(status?.freeForAll);
+    }
+}
+
+async function fetchModeStatus() {
+    try {
+        const response = await fetch('/api/mode-status', {
+            credentials: 'same-origin',
+            cache: 'no-store'
+        });
+        if (!response.ok) {
+            return;
+        }
+
+        const payload = await response.json();
+        applyModeStatus(payload);
+    } catch (_error) {
+        // Non-blocking: menu should remain usable even if status fetch fails.
+    }
+}
+
+function setupModeStatusRefresh() {
+    fetchModeStatus();
+
+    if (modeStatusRefreshTimer) {
+        clearInterval(modeStatusRefreshTimer);
+    }
+
+    modeStatusRefreshTimer = setInterval(() => {
+        fetchModeStatus();
+    }, MODE_STATUS_REFRESH_MS);
+}
+
+function isChatFocused() {
+    return !!chatInput && document.activeElement === chatInput;
+}
+
+function setChatHidden(hidden) {
+    chatHiddenByUser = !!hidden;
+    if (!chatContainer) {
+        return;
+    }
+
+    chatContainer.classList.toggle('chat-collapsed', chatHiddenByUser);
+    if (chatToggleButton) {
+        chatToggleButton.textContent = chatHiddenByUser ? 'Show' : 'Hide';
+    }
+}
+
+function scheduleChatFade() {
+    if (!chatContainer || chatHiddenByUser) {
+        return;
+    }
+
+    if (chatFadeTimer) {
+        clearTimeout(chatFadeTimer);
+    }
+
+    chatFadeTimer = setTimeout(() => {
+        if (!chatHiddenByUser && !isChatFocused()) {
+            chatContainer.classList.add('chat-faded');
+        }
+    }, CHAT_IDLE_FADE_MS);
+}
+
+function revealChat() {
+    if (!chatContainer || chatHiddenByUser) {
+        return;
+    }
+
+    chatContainer.classList.remove('chat-faded');
+    scheduleChatFade();
+}
+
+function resetChatForRoom() {
+    if (chatMessages) {
+        chatMessages.innerHTML = '';
+    }
+    if (chatInput) {
+        chatInput.value = '';
+        chatInput.blur();
+    }
+    if (chatFadeTimer) {
+        clearTimeout(chatFadeTimer);
+        chatFadeTimer = null;
+    }
+    if (chatContainer) {
+        chatContainer.classList.remove('chat-faded');
+    }
+    setChatHidden(false);
+    scheduleChatFade();
+}
+
+function releaseMovementKeys() {
+    for (const keyCode of MOVEMENT_KEY_CODES) {
+        updateLocalInputState(keyCode, false);
+        socket.emit('keyup', keyCode);
+    }
+    clearVirtualControls();
+}
+
+function focusChatInput() {
+    if (!chatInput || !gameActive) {
+        return;
+    }
+
+    if (chatHiddenByUser) {
+        setChatHidden(false);
+    }
+
+    releaseMovementKeys();
+    revealChat();
+    chatInput.focus();
+}
+
+function sendChatFromInput() {
+    if (!chatInput || !gameActive) {
+        return;
+    }
+
+    const message = `${chatInput.value || ''}`.trim().slice(0, 180);
+    if (message) {
+        socket.emit('chatMessage', { message });
+    }
+
+    chatInput.value = '';
+    chatInput.blur();
+    scheduleChatFade();
+}
+
+function appendChatMessage(data) {
+    if (!chatMessages || !data) {
+        return;
+    }
+
+    const name = `${data.name || 'Player'}`.trim() || 'Player';
+    const message = `${data.message || ''}`.trim();
+    if (!message) {
+        return;
+    }
+
+    const line = document.createElement('div');
+    line.className = 'chat-line';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'chat-name';
+    nameSpan.textContent = `${name}:`;
+
+    const textSpan = document.createElement('span');
+    textSpan.textContent = message;
+
+    line.appendChild(nameSpan);
+    line.appendChild(textSpan);
+    chatMessages.appendChild(line);
+
+    while (chatMessages.children.length > CHAT_MAX_MESSAGES) {
+        chatMessages.removeChild(chatMessages.firstChild);
+    }
+
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    revealChat();
+}
+
+function handleChatMessage(data) {
+    appendChatMessage(data);
+}
+
+function setupChatUi() {
+    if (!chatContainer || !chatInput || !chatToggleButton) {
+        return;
+    }
+
+    setChatHidden(false);
+    scheduleChatFade();
+
+    chatToggleButton.addEventListener('click', () => {
+        const nextHidden = !chatHiddenByUser;
+        setChatHidden(nextHidden);
+        if (!nextHidden) {
+            revealChat();
+        }
+    });
+
+    chatInput.addEventListener('focus', () => {
+        revealChat();
+    });
+
+    chatInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            event.stopPropagation();
+            sendChatFromInput();
+            return;
+        }
+
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            chatInput.blur();
+            scheduleChatFade();
+        }
+    });
 }
 
 function hasDisplayName() {
@@ -968,7 +1225,7 @@ function requestLeaveMatch() {
     clearLocalInputState();
     socket.emit('leaveMatch');
 
-    if (gameMode === '1v1') {
+    if (gameMode === '1v1' || gameMode === '2v2') {
         gameActive = false;
         updateMobileHudVisibility();
         if (forfeitReturnTimeout) {
@@ -1088,6 +1345,7 @@ function main() {
         hideAllMenus();
         gameScreen.style.display = 'flex';
         gameActive = true;
+        resetChatForRoom();
         updateMobileHudVisibility();
         matchEndOverlay.classList.remove('show');
         matchEndCard.classList.remove('victory', 'defeat');
@@ -1107,6 +1365,7 @@ function main() {
     socket.on('reaverZap', handleReaverZap);
     socket.on('swapWeapons', handleSwapWeapons);
     socket.on('combatText', handleCombatText);
+    socket.on('chatMessage', handleChatMessage);
     socket.on('matchEnded', handleMatchEnded);
     socket.on('matchClosed', handleMatchClosed);
     socket.on('error', handleServerError);
@@ -1156,6 +1415,7 @@ function showMainMenu() {
 
     hideAllMenus();
     gameScreen.style.display = 'none';
+    setMainMenuView('main');
     menu.style.display = 'block';
     updateMainMenuTopActions();
     updateAccountSummaryUi();
@@ -1165,6 +1425,7 @@ function showMainMenu() {
     gameActive = false;
     clearVirtualControls();
     updateMobileHudVisibility();
+    resetChatForRoom();
     gameMode = '1v1';
     soundManager.stop('laser');
     matchEndOverlay.classList.remove('show');
@@ -1176,6 +1437,22 @@ function showMainMenu() {
         clearTimeout(matchEndTimeout);
         matchEndTimeout = null;
     }
+
+    fetchModeStatus();
+}
+
+function showPlayMenu() {
+    hideAllMenus();
+    gameScreen.style.display = 'none';
+    menu.style.display = 'block';
+    setMainMenuView('play');
+    updateMainMenuTopActions();
+    updateAccountSummaryUi();
+    if (menuLink) {
+        menuLink.style.display = 'flex';
+    }
+    resetChatForRoom();
+    fetchModeStatus();
 }
 
 function showCharacter() {
@@ -1195,6 +1472,7 @@ function showControls() {
 function showSearching() {
     hideAllMenus();
     searchingMenu.style.display = 'block';
+    resetChatForRoom();
 }
 
 function getFallbackSecondary(primaryWeaponType) {
@@ -1460,6 +1738,8 @@ function resetClientCache() {
     gameState.bullets = [];
     gameState.grenades = [];
     gameState.obstacles = [];
+    gameState.teamLives = null;
+    latestTeamLives = null;
     clientGameStateCache.players.clear();
     clientGameStateCache.bullets.clear();
     clientGameStateCache.grenades.clear();
@@ -2054,6 +2334,13 @@ function applyDeltaToGameState(delta) {
         gameState.bullets = delta.bullets || [];
         gameState.grenades = delta.grenades || [];
         gameState.obstacles = delta.obstacles || [];
+        gameState.teamLives = Object.prototype.hasOwnProperty.call(delta, 'teamLives')
+            ? (delta.teamLives || null)
+            : gameState.teamLives;
+        latestTeamLives = gameState.teamLives;
+        if (delta.gameMode) {
+            gameMode = delta.gameMode;
+        }
         
         // Update cache
         clientGameStateCache.players.clear();
@@ -2182,6 +2469,11 @@ function applyDeltaToGameState(delta) {
     if (delta.gameMode) {
         gameMode = delta.gameMode;
     }
+
+    if (Object.prototype.hasOwnProperty.call(delta, 'teamLives')) {
+        gameState.teamLives = delta.teamLives || null;
+        latestTeamLives = gameState.teamLives;
+    }
 }
 
 function draw(gameState) {
@@ -2224,6 +2516,10 @@ function draw(gameState) {
 
     if (gameMode === '1v1') {
         killProgressContainer.style.display = 'block';
+        killProgressContainer.style.borderColor = '';
+        if (killProgressTitle) {
+            killProgressTitle.textContent = 'First to 5';
+        }
         const yourKills = thisPlayer.kills || 0;
         const opponent = gameState.players.find((player) => player.id !== thisPlayer.id);
         const opponentKills = opponent?.kills || 0;
@@ -2243,6 +2539,19 @@ function draw(gameState) {
         } else {
             killProgressContainer.style.opacity = '0';
         }
+    } else if (gameMode === '2v2') {
+        killProgressContainer.style.display = 'block';
+        killProgressContainer.style.opacity = '1';
+        if (killProgressTitle) {
+            killProgressTitle.textContent = 'Team Lives';
+        }
+        const redLives = Number(latestTeamLives?.red ?? 10);
+        const blueLives = Number(latestTeamLives?.blue ?? 10);
+        killProgressText.textContent = `Red ${redLives} | Blue ${blueLives}`;
+        const yourTeam = thisPlayer.team === 'red' ? 'red' : 'blue';
+        killProgressContainer.style.borderColor = yourTeam === 'red'
+            ? 'rgba(255, 105, 105, 0.75)'
+            : 'rgba(114, 170, 255, 0.75)';
     } else {
         killProgressContainer.style.display = 'none';
         killProgressContainer.style.opacity = '0';
@@ -2606,6 +2915,10 @@ function getPlayerOpacity(player, thisPlayer) {
 }
 
 function drawPlayer(player, thisPlayer) {
+    if (player.isRespawning) {
+        return;
+    }
+
     const computedOpacity = getPlayerOpacity(player, thisPlayer);
     if (computedOpacity <= 0) {
         return;
@@ -2670,6 +2983,19 @@ function drawPlayer(player, thisPlayer) {
         ctx.strokeStyle = player.flashingTimer > 0 ? 'darkred' : 'darkblue';
         ctx.stroke();
     }
+
+    if (gameMode === '2v2' && (player.team === 'red' || player.team === 'blue')) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(0, 0, player.radius, 0, 2 * Math.PI);
+        ctx.clip();
+        ctx.globalCompositeOperation = 'source-atop';
+        ctx.fillStyle = TEAM_COLORS[player.team];
+        ctx.beginPath();
+        ctx.arc(0, 0, player.radius, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.restore();
+    }
     
     // Reset shadow effects
     ctx.shadowColor = 'transparent';
@@ -2689,6 +3015,25 @@ function drawPlayer(player, thisPlayer) {
         ctx.arc(0, 0, player.radius, 0, 2 * Math.PI);
         ctx.fill();
         ctx.globalAlpha = 1.0;
+    }
+
+    if ((player.invulnerableTimer || 0) > 0) {
+        const pulse = 1 + Math.sin(Date.now() / 130) * 0.08;
+        const auraRadius = (player.radius + 14) * pulse;
+        const auraColor = player.team === 'red' ? '#ff8f8f' : '#8fb8ff';
+        ctx.save();
+        ctx.globalAlpha = 0.42;
+        ctx.strokeStyle = auraColor;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(0, 0, auraRadius, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.globalAlpha = 0.18;
+        ctx.fillStyle = auraColor;
+        ctx.beginPath();
+        ctx.arc(0, 0, player.radius + 6, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.restore();
     }
 
     if (
@@ -3040,8 +3385,35 @@ function startFreeForAll() {
     main();
 }
 
+function startTwoVsTwo() {
+    gameMode = '2v2';
+    showSearching();
+    socket.emit('findTwoVsTwo', {
+        characterType: playerSettings.characterType,
+        weaponType: playerSettings.weaponType,
+        secondaryWeaponType: playerSettings.secondaryWeaponType,
+        sharedAbilityType: playerSettings.sharedAbilityType,
+    });
+    main();
+}
+
 function handleKeyDown(event) {
     const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
+
+    if (gameActive && key === 'enter') {
+        event.preventDefault();
+        if (isChatFocused()) {
+            sendChatFromInput();
+        } else {
+            focusChatInput();
+        }
+        return;
+    }
+
+    if (isChatFocused()) {
+        return;
+    }
+
     if (key === NET_DEBUG_TOGGLE_KEY || event.code === 'KeyL') {
         event.preventDefault();
         netDebugOverlayEnabled = !netDebugOverlayEnabled;
@@ -3052,11 +3424,18 @@ function handleKeyDown(event) {
 }
 
 function handleKeyUp(event) {
+    if (isChatFocused()) {
+        return;
+    }
     updateLocalInputState(event.keyCode, false);
     socket.emit('keyup', event.keyCode);
 }
 
 function handleMouseMove(event) {
+    if (isChatFocused()) {
+        return;
+    }
+
     const rect = canvas.getBoundingClientRect();
     const mouseX = event.clientX - rect.left;
     const mouseY = event.clientY - rect.top;
@@ -3070,10 +3449,16 @@ function handleMouseMove(event) {
 }
 
 function handleMouseDown(event) {
+    if (chatContainer && chatContainer.contains(event.target)) {
+        return;
+    }
     socket.emit('mouseDown', event.button);
 }
 
 function handleMouseUp(event) {
+    if (chatContainer && chatContainer.contains(event.target)) {
+        return;
+    }
     socket.emit('mouseUp', event.button);
 }
 
@@ -3123,6 +3508,13 @@ function handlePlayerLeft(data) {
         Toastify({
             text: `A player left the game. ${data.playerCount} players remaining.`,
             duration: 3000,
+            gravity: "top",
+            position: "right",
+        }).showToast();
+    } else if (gameMode === '2v2' && Number.isFinite(Number(data?.playerCount))) {
+        Toastify({
+            text: `A player left the queue. ${Number(data.playerCount)} player(s) waiting.`,
+            duration: 2800,
             gravity: "top",
             position: "right",
         }).showToast();
@@ -3213,15 +3605,25 @@ function handleMatchEnded(data) {
     gameActive = false;
     soundManager.stop('laser');
     matchEndTitle.textContent = data.youWon ? 'Victory' : 'Defeat';
-    matchEndScore.textContent = `${data.yourKills || 0} - ${data.opponentKills || 0}`;
+    if (gameMode === '2v2' || data.winnerTeam) {
+        const redLives = Number(data.teamLives?.red ?? gameState.teamLives?.red ?? 0);
+        const blueLives = Number(data.teamLives?.blue ?? gameState.teamLives?.blue ?? 0);
+        matchEndScore.textContent = `Red ${redLives} - Blue ${blueLives}`;
+    } else {
+        matchEndScore.textContent = `${data.yourKills || 0} - ${data.opponentKills || 0}`;
+    }
     if (matchEndSubtitle) {
         let subtitle = 'Returning to menu...';
         if (data.reason === 'forfeit') {
             subtitle = data.youWon ? 'Opponent forfeited.' : 'Forfeit counted as a loss.';
         }
 
+        const isTwoVsTwoMatch = gameMode === '2v2' || data.winnerTeam;
         const hasEloDelta = Number.isFinite(Number(data.eloDelta));
-        if (hasEloDelta) {
+        if (isTwoVsTwoMatch) {
+            const winnerTeam = data.winnerTeam === 'red' ? 'Red' : 'Blue';
+            subtitle = `${subtitle} ${winnerTeam} team wins!`;
+        } else if (hasEloDelta) {
             const eloDelta = Number(data.eloDelta);
             const deltaText = eloDelta > 0 ? `+${eloDelta}` : `${eloDelta}`;
             const newElo = Number(data.newElo);

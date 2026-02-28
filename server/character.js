@@ -55,9 +55,16 @@ class Character {
         this.reaverSourceId = null;
         this.reaverDotEffects = [];
         this.reaverBolts = [];
+        this.team = options.team || null;
+        this.isRespawning = false;
+        this.respawnTimer = 0;
+        this.invulnerableTimer = 0;
     }
     
     takeDamage(damage, sourceId = null) {
+        if (this.isRespawning || (this.invulnerableTimer || 0) > 0) {
+            return;
+        }
         this.HP -= damage * this.defense;
         if (sourceId) {
             this.lastDamagedBy = sourceId;
@@ -194,6 +201,9 @@ class Character {
         this.reaverSourceId = null;
         this.reaverDotEffects = [];
         this.reaverBolts = [];
+        this.isRespawning = false;
+        this.respawnTimer = 0;
+        this.invulnerableTimer = 0;
         this.sharedAbilityKeyHeld = false;
         this.passiveAbilityKeyHeld = false;
         this.specialAbilityKeyHeld = false;
@@ -280,6 +290,9 @@ class Character {
         this.reaverSourceId = null;
         this.reaverDotEffects = [];
         this.reaverBolts = [];
+        this.isRespawning = false;
+        this.respawnTimer = 0;
+        this.invulnerableTimer = 0;
         this.sharedAbilityKeyHeld = false;
         this.passiveAbilityKeyHeld = false;
         this.specialAbilityKeyHeld = false;

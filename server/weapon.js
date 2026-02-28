@@ -310,7 +310,7 @@ class LaserGun extends Weapon {
         }
     }
 
-    raycast(x, y, angle, gameState, playerId) {
+    raycast(x, y, angle, gameState, playerId, ownerTeam = null) {
         const stepSize = 6;
         const rayRadius = 2;
         const dx = Math.cos(angle);
@@ -353,6 +353,14 @@ class LaserGun extends Weapon {
 
             for (const player of gameState.players || []) {
                 if (!player || player.id === playerId) continue;
+                if (
+                    gameState.gameMode === '2v2' &&
+                    ownerTeam &&
+                    player.team &&
+                    ownerTeam === player.team
+                ) {
+                    continue;
+                }
                 const pdx = player.x - px;
                 const pdy = player.y - py;
                 if ((pdx * pdx + pdy * pdy) <= (player.radius + rayRadius) * (player.radius + rayRadius)) {
@@ -378,7 +386,14 @@ class LaserGun extends Weapon {
             this.reload();
         }
 
-        const { endX, endY, hitPlayer, hitObstacle } = this.raycast(x, y, this.angle, gameState, playerId);
+        const { endX, endY, hitPlayer, hitObstacle } = this.raycast(
+            x,
+            y,
+            this.angle,
+            gameState,
+            playerId,
+            owner?.team || null
+        );
 
         if (owner) {
             owner.laserBeam = {

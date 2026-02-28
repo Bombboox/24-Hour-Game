@@ -34,8 +34,12 @@ class GameStateCache {
                 radius: player.radius,
                 moveSpeed: Math.round((player.getMoveSpeed ? player.getMoveSpeed() : player.speed || 0) * 1000) / 1000,
                 name: player.name,
+                team: player.team || null,
                 kills: player.kills,
                 flashingTimer: Math.round(player.flashingTimer * 100) / 100,
+                isRespawning: player.isRespawning || false,
+                respawnTimer: Math.round((player.respawnTimer || 0) * 100) / 100,
+                invulnerableTimer: Math.round((player.invulnerableTimer || 0) * 100) / 100,
                 enlarged: player.enlarged || false,
                 berserked: player.berserked || false,
                 dashing: player.dashing || false,
@@ -139,6 +143,7 @@ class GameStateCache {
                 headImage: obstacle.headImage
             })),
             gameMode: gameState.gameMode || '1v1',
+            teamLives: gameState.teamLives || null,
             frameNumber: ++this.frameNumber
         };
     }
@@ -152,6 +157,7 @@ class GameStateCache {
         const delta = {
             frameNumber: currentState.frameNumber,
             gameMode: currentState.gameMode,
+            teamLives: currentState.teamLives,
             players: [],
             bullets: [],
             grenades: [],
@@ -226,7 +232,10 @@ class GameStateCache {
             }
         }
 
-        const hasChanges = delta.players.length > 0 || 
+        const teamLivesChanged = JSON.stringify(currentState.teamLives) !== JSON.stringify(previousState.teamLives);
+
+        const hasChanges = teamLivesChanged ||
+                          delta.players.length > 0 || 
                           delta.bullets.length > 0 || 
                           delta.grenades.length > 0 ||
                           delta.obstacles.length > 0 ||
@@ -242,7 +251,11 @@ class GameStateCache {
                current.y !== previous.y ||
                current.angle !== previous.angle ||
                current.moveSpeed !== previous.moveSpeed ||
+               current.team !== previous.team ||
                current.HP !== previous.HP ||
+               current.isRespawning !== previous.isRespawning ||
+               current.respawnTimer !== previous.respawnTimer ||
+               current.invulnerableTimer !== previous.invulnerableTimer ||
                current.flashingTimer !== previous.flashingTimer ||
                current.enlarged !== previous.enlarged ||
                current.berserked !== previous.berserked ||

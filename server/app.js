@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const uWS = require('uWebSockets.js');
 const msgpack = require('msgpack-lite');
 const { Pool } = require('pg');
-const { createGameState, gameLoop, generateNewMap } = require('./game');
+const { createGameState, gameLoop, generateNewMap, TWO_VS_TWO_TEAM_LIVES } = require('./game');
 const { Berserker, Ninja, King, Demoman, Reaver } = require('./character');
 const { M4, Sniper, Pistol, Shotgun, LaserGun, Taser, RocketLauncher, BubbleLauncher } = require('./weapon');
 const { Grenade, Invisibility, ShieldBarrier, TurretAbility, HealingCircle } = require('./specialAbilities');
@@ -28,6 +28,7 @@ const DEFAULT_BUX = 0;
 const ELO_K_FACTOR = 32;
 const MIN_ACCOUNT_ELO = 100;
 const ONE_VS_ONE_KILL_TARGET = 5;
+const TWO_VS_TWO_MAX_PLAYERS = 4;
 
 let wsApp;
 const socketsById = new Map();
@@ -141,6 +142,7 @@ const gameStateCaches = new Map();
 const roomPlayers = new Map();
 
 const FREE_FOR_ALL_ROOM = 'freeForAll';
+const TWO_VS_TWO_ROOM_PREFIX = '2v2_';
 
 const CHARACTER_CLASSES = {
     ninja: Ninja,
@@ -197,6 +199,8 @@ const SPAWN_POSITIONS = {
 const RATE_LIMITS = {
     findGame: { maxRequests: 5, windowMs: 60000 }, // 5 requests per minute
     findFreeForAll: { maxRequests: 5, windowMs: 60000 }, // 5 requests per minute
+    findTwoVsTwo: { maxRequests: 5, windowMs: 60000 }, // 5 requests per minute
+    chatMessage: { maxRequests: 8, windowMs: 4000 }, // 8 messages per 4 seconds
     keydown: { maxRequests: 100, windowMs: 1000 }, // 100 requests per second
     keyup: { maxRequests: 100, windowMs: 1000 }, // 100 requests per second
     changeAngle: { maxRequests: 360, windowMs: 1000 }, // 360 requests per second
@@ -645,6 +649,7 @@ function createGuestIdentity() {
     return {
         mode: 'guest',
         accountId: null,
+        displayName: null,
         elo: DEFAULT_ELO,
         effectiveElo: DEFAULT_ELO
     };
@@ -714,6 +719,7 @@ async function resolveSocketIdentity(socket) {
         socket.identity = {
             mode: 'account',
             accountId: account.id,
+            displayName: normalizeDisplayName(account.displayName || ''),
             elo: Number(account.elo ?? DEFAULT_ELO),
             effectiveElo: Number(account.elo ?? DEFAULT_ELO)
         };
@@ -1118,6 +1124,10 @@ function bootstrapWebSocketRoutes() {
         });
     });
 
+    wsApp.get('/api/mode-status', (res) => {
+        createJsonResponse(res, '200 OK', getModeStatus());
+    });
+
     wsApp.get('/api/auth/me', async (res, req) => {
         const responseState = getResponseState(res);
 
@@ -1353,6 +1363,114 @@ function findAvailableRoom(seekerElo = DEFAULT_ELO) {
     return selectedRoomName;
 }
 
+function findAvailableTwoVsTwoRoom() {
+    for (const [roomName, gameState] of state.entries()) {
+        if (!gameState || gameState.gameMode !== '2v2' || gameState.matchEnded) {
+            continue;
+        }
+
+        const currentPlayers = Array.isArray(gameState.players) ? gameState.players.length : 0;
+        if (currentPlayers > 0 && currentPlayers < TWO_VS_TWO_MAX_PLAYERS) {
+            return roomName;
+        }
+    }
+
+    return null;
+}
+
+function getTwoVsTwoSpawn(team, teamSlot = 0) {
+    const slotY = teamSlot === 0 ? -90 : 90;
+    if (team === 'red') {
+        return { x: -MAP_RADIUS + 90, y: slotY };
+    }
+
+    return { x: MAP_RADIUS - 90, y: slotY };
+}
+
+const CHAT_MAX_LENGTH = 180;
+
+function sanitizeChatMessage(value) {
+    if (typeof value !== 'string') {
+        return '';
+    }
+
+    return value
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, CHAT_MAX_LENGTH);
+}
+
+function getSocketChatName(socket) {
+    const normalizedDisplayName = normalizeDisplayName(socket?.identity?.displayName || '');
+    if (normalizedDisplayName) {
+        return normalizedDisplayName;
+    }
+
+    if (Number.isFinite(Number(socket?.number))) {
+        return `Guest-${Number(socket.number)}`;
+    }
+
+    const idSuffix = typeof socket?.id === 'string' ? socket.id.slice(-4) : '????';
+    return `Guest-${idSuffix}`;
+}
+
+function getModeStatus() {
+    let oneVsOneQueued = 0;
+    let oneVsOnePlaying = 0;
+    let freeForAllPlaying = 0;
+    let twoVsTwoQueued = 0;
+    let twoVsTwoPlaying = 0;
+
+    for (const [roomName, gameState] of state.entries()) {
+        if (!gameState) {
+            continue;
+        }
+
+        if (gameState.gameMode === '1v1') {
+            if (gameState.matchEnded) {
+                continue;
+            }
+
+            const playersInRoom = Array.isArray(gameState.players) ? gameState.players.length : 0;
+            if (playersInRoom === 1) {
+                oneVsOneQueued += 1;
+            } else if (playersInRoom >= 2) {
+                oneVsOnePlaying += playersInRoom;
+            }
+            continue;
+        }
+
+        if (roomName === FREE_FOR_ALL_ROOM || gameState.gameMode === 'freeForAll') {
+            freeForAllPlaying += Array.isArray(gameState.players) ? gameState.players.length : 0;
+            continue;
+        }
+
+        if (gameState.gameMode === '2v2') {
+            const playersInRoom = Array.isArray(gameState.players) ? gameState.players.length : 0;
+            if (playersInRoom > 0 && playersInRoom < TWO_VS_TWO_MAX_PLAYERS) {
+                twoVsTwoQueued += playersInRoom;
+            } else if (playersInRoom >= TWO_VS_TWO_MAX_PLAYERS) {
+                twoVsTwoPlaying += playersInRoom;
+            }
+        }
+    }
+
+    return {
+        oneVsOne: {
+            queued: oneVsOneQueued,
+            playing: oneVsOnePlaying
+        },
+        freeForAll: {
+            queued: 0,
+            playing: freeForAllPlaying
+        },
+        twoVsTwo: {
+            queued: twoVsTwoQueued,
+            playing: twoVsTwoPlaying
+        }
+    };
+}
+
 const RANDOM_PLAYER_MIN = 3;
 const RANDOM_PLAYER_RANGE = 1000;
 
@@ -1386,6 +1504,20 @@ function sendFullGameState(socket, gameCode) {
     const fullState = cache.serializeGameState(gameState);
     delete fullState.frameNumber;
     socket.emit('gameState', fullState);
+}
+
+function broadcastFullGameState(gameCode) {
+    const cache = gameStateCaches.get(gameCode);
+    const gameState = state.get(gameCode);
+    if (!cache || !gameState) return;
+
+    const fullState = cache.serializeGameState(gameState);
+    delete fullState.frameNumber;
+
+    for (const player of gameState.players || []) {
+        if (!player?.id) continue;
+        io.to(player.id).emit('gameState', fullState);
+    }
 }
 
 async function finalizeOneVsOneMatch(gameCode, options = {}) {
@@ -1537,8 +1669,7 @@ io.on('connection', (socket) => {
                 socket.emit('gameFound', roomName);
                 
                 io.sockets.in(roomName).emit('gameStarting');
-                
-                sendFullGameState(socket, roomName);
+                broadcastFullGameState(roomName);
                 startGameInterval(roomName);
                 
                 logger.info(`Player joined existing room: ${roomName}`);
@@ -1633,6 +1764,84 @@ io.on('connection', (socket) => {
         }
     };
 
+    const handleFindTwoVsTwo = (data) => {
+        try {
+            if (isRateLimited(socket.id, 'findTwoVsTwo')) {
+                socket.emit('error', 'Rate limit exceeded. Please try again later.');
+                return;
+            }
+
+            if (clientRooms.has(socket.id)) {
+                socket.emit('error', 'Already in a match or searching for one');
+                return;
+            }
+
+            let roomName = findAvailableTwoVsTwoRoom();
+            if (!roomName) {
+                roomName = `${TWO_VS_TWO_ROOM_PREFIX}${makeID(5)}`;
+                state.set(roomName, createGameState());
+                state.get(roomName).obstacles = generateNewMap();
+                state.get(roomName).gameMode = '2v2';
+                state.get(roomName).teamLives = {
+                    red: TWO_VS_TWO_TEAM_LIVES,
+                    blue: TWO_VS_TWO_TEAM_LIVES
+                };
+                gameStateCaches.set(roomName, new GameStateCache());
+            }
+
+            const roomState = state.get(roomName);
+            const currentPlayers = roomState.players.length;
+            const redCount = roomState.players.filter((player) => player.team === 'red').length;
+            const blueCount = roomState.players.filter((player) => player.team === 'blue').length;
+            const team = redCount <= blueCount ? 'red' : 'blue';
+            const teamSlot = team === 'red' ? redCount : blueCount;
+            const spawn = getTwoVsTwoSpawn(team, teamSlot);
+
+            clientRooms.set(socket.id, roomName);
+            socket.join(roomName);
+            socket.number = currentPlayers + 1;
+
+            const player = createPlayer(
+                data?.characterType,
+                data?.weaponType,
+                data?.secondaryWeaponType,
+                data?.sharedAbilityType,
+                socket.number,
+                socket.id,
+                spawn.x,
+                spawn.y
+            );
+            player.team = team;
+            player.isRespawning = false;
+            player.respawnTimer = 0;
+            player.invulnerableTimer = 0;
+            roomState.players.push(player);
+
+            socket.emit('init', socket.number);
+            socket.emit('gameFound', roomName);
+
+            const joinedCount = roomState.players.length;
+            if (joinedCount >= TWO_VS_TWO_MAX_PLAYERS) {
+                io.sockets.in(roomName).emit('gameStarting');
+                broadcastFullGameState(roomName);
+                startGameInterval(roomName);
+                logger.info(`2v2 room started: ${roomName}`);
+            } else {
+                socket.emit('waitingForPlayer');
+                io.sockets.in(roomName).emit('playerJoined', {
+                    playerCount: joinedCount,
+                    playerId: socket.id
+                });
+                sendFullGameState(socket, roomName);
+                logger.info(`Player queued for 2v2: ${socket.id} in ${roomName}`);
+            }
+        } catch (error) {
+            logger.error('Error in handleFindTwoVsTwo', error);
+            healthMetrics.errors++;
+            socket.emit('error', 'Internal server error');
+        }
+    };
+
     const handleChangeAngle = (angle) => {
         if (isRateLimited(socket.id, 'changeAngle')) {
             return; 
@@ -1690,6 +1899,36 @@ io.on('connection', (socket) => {
         }
     };
 
+    const handleChatMessage = async (data) => {
+        try {
+            if (isRateLimited(socket.id, 'chatMessage')) {
+                return;
+            }
+
+            const roomName = clientRooms.get(socket.id);
+            if (!roomName) {
+                return;
+            }
+
+            const message = sanitizeChatMessage(data?.message);
+            if (!message) {
+                return;
+            }
+
+            if (!socket.identityResolved) {
+                await resolveSocketIdentity(socket);
+            }
+
+            io.sockets.in(roomName).emit('chatMessage', {
+                name: getSocketChatName(socket),
+                message,
+                sentAt: Date.now()
+            });
+        } catch (error) {
+            logger.warn('Failed to process chat message', { error: error.message, socketId: socket.id });
+        }
+    };
+
     const leaveCurrentRoom = async () => {
         const roomName = clientRooms.get(socket.id);
         if (!roomName) {
@@ -1711,6 +1950,25 @@ io.on('connection', (socket) => {
         }
 
         const roomState = state.get(roomName);
+        if (
+            roomState &&
+            roomState.gameMode === '2v2' &&
+            roomState.players.length < TWO_VS_TWO_MAX_PLAYERS &&
+            !roomState.matchEnded
+        ) {
+            cleanupPlayerFromRoom(socket.id);
+            if (roomState.players.length <= 0) {
+                cleanupRoom(roomName);
+            } else {
+                io.sockets.in(roomName).emit('playerLeft', {
+                    playerCount: roomState.players.length,
+                    playerId: socket.id
+                });
+            }
+            logger.info(`Player left 2v2 queue: ${socket.id}`);
+            return true;
+        }
+
         if (roomState && roomState.gameMode === '1v1' && roomState.players.length >= 2 && !roomState.matchEnded) {
             const winner = roomState.players.find((player) => player.id !== socket.id);
             if (winner) {
@@ -1724,13 +1982,37 @@ io.on('connection', (socket) => {
                     reason: 'forfeit'
                 });
             }
+        } else if (roomState && roomState.gameMode === '2v2' && !roomState.matchEnded) {
+            const leavingPlayer = roomState.players.find((player) => player.id === socket.id);
+            const leavingTeam = leavingPlayer?.team === 'blue' ? 'blue' : 'red';
+            const winnerTeam = leavingTeam === 'red' ? 'blue' : 'red';
+            roomState.matchEnded = true;
+            roomState.matchWinnerTeam = winnerTeam;
+            roomState.matchEndReason = 'forfeit';
+            roomState.matchResultEmitted = true;
+
+            for (const participant of roomState.players) {
+                io.to(participant.id).emit('matchEnded', {
+                    youWon: participant.team === winnerTeam,
+                    yourKills: participant.kills || 0,
+                    opponentKills: 0,
+                    targetKills: 0,
+                    reason: 'forfeit',
+                    rated: false,
+                    eloDelta: 0,
+                    newElo: DEFAULT_ELO,
+                    opponentElo: DEFAULT_ELO,
+                    winnerTeam,
+                    teamLives: roomState.teamLives || { red: 0, blue: 0 }
+                });
+            }
         } else if (roomState) {
             io.sockets.in(roomName).emit('opponentLeft');
         }
 
         cleanupSocketResources(socket.id);
         cleanupRoom(roomName);
-        logger.info(`1v1 room ended due to player leaving: ${roomName}`);
+        logger.info(`Room ended due to player leaving: ${roomName}`);
         return true;
     };
 
@@ -1757,6 +2039,26 @@ io.on('connection', (socket) => {
     const handleCancelSearch = () => {
         if (clientRooms.has(socket.id)) {
             const roomName = clientRooms.get(socket.id);
+            const roomState = roomName ? state.get(roomName) : null;
+
+            if (
+                roomState &&
+                roomState.gameMode === '2v2' &&
+                roomState.players.length < TWO_VS_TWO_MAX_PLAYERS &&
+                !roomState.matchEnded
+            ) {
+                cleanupPlayerFromRoom(socket.id);
+                if (roomState.players.length <= 0) {
+                    cleanupRoom(roomName);
+                } else {
+                    io.sockets.in(roomName).emit('playerLeft', {
+                        playerCount: roomState.players.length,
+                        playerId: socket.id
+                    });
+                }
+                return;
+            }
+
             cleanupSocketResources(socket.id);
             if (roomName && roomName !== FREE_FOR_ALL_ROOM) {
                 cleanupRoom(roomName);
@@ -1766,11 +2068,13 @@ io.on('connection', (socket) => {
 
     socket.on('findGame', handleFindGame);
     socket.on('findFreeForAll', handleFindFreeForAll);
+    socket.on('findTwoVsTwo', handleFindTwoVsTwo);
     socket.on('keydown', handleKeydown);
     socket.on('keyup', handleKeyup);
     socket.on('changeAngle', handleChangeAngle);
     socket.on('mouseDown', handleMouseDown);
     socket.on('mouseUp', handleMouseUp);
+    socket.on('chatMessage', handleChatMessage);
     socket.on('leaveMatch', handleLeaveMatch);
     socket.on('disconnect', handleDisconnect);
     socket.on('cancelSearch', handleCancelSearch);
@@ -1817,7 +2121,36 @@ function startGameInterval(gameCode) {
         }
 
         if (
-            gameState.gameMode === '1v1' &&
+            gameState.gameMode === '2v2' &&
+            gameState.matchEnded &&
+            !gameState.matchResultEmitted
+        ) {
+            const teamLives = gameState.teamLives || { red: 0, blue: 0 };
+            const winnerTeam = gameState.matchWinnerTeam === 'red'
+                ? 'red'
+                : (gameState.matchWinnerTeam === 'blue'
+                    ? 'blue'
+                    : (Number(teamLives.red || 0) > Number(teamLives.blue || 0) ? 'red' : 'blue'));
+            for (const participant of gameState.players) {
+                io.to(participant.id).emit('matchEnded', {
+                    youWon: participant.team === winnerTeam,
+                    yourKills: participant.kills || 0,
+                    opponentKills: 0,
+                    targetKills: 0,
+                    reason: gameState.matchEndReason || 'elimination',
+                    rated: false,
+                    eloDelta: 0,
+                    newElo: DEFAULT_ELO,
+                    opponentElo: DEFAULT_ELO,
+                    winnerTeam,
+                    teamLives
+                });
+            }
+            gameState.matchResultEmitted = true;
+        }
+
+        if (
+            (gameState.gameMode === '1v1' || gameState.gameMode === '2v2') &&
             gameState.matchEnded &&
             !gameState.matchCleanupScheduled
         ) {

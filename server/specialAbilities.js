@@ -434,6 +434,14 @@ class ReaverArcPassive extends PassiveAbility {
         const now = Date.now();
         const targets = gameState.players.filter((target) => {
             if (!target || target.id === character.id) return false;
+            if (
+                gameState.gameMode === '2v2' &&
+                character.team &&
+                target.team &&
+                character.team === target.team
+            ) {
+                return false;
+            }
             if ((target.reaverStacks || 0) < 3) return false;
             const dx = target.x - character.x;
             const dy = target.y - character.y;

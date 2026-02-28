@@ -524,6 +524,25 @@
             transition: left 0.5s;
         }
 
+        .mode-indicator {
+            display: block;
+            margin-top: 6px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.3px;
+            text-transform: none;
+            opacity: 0.88;
+        }
+
+        .play-menu-title {
+            margin-top: 4px;
+            margin-bottom: 8px;
+            font-size: 14px;
+            color: rgba(220, 242, 255, 0.92);
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+        }
+
         .register-panel {
             margin-bottom: 20px;
             padding: 16px 14px;
@@ -553,9 +572,112 @@
             cursor: pointer;
         }
 
+        .chat-container {
+            position: absolute;
+            left: 20px;
+            bottom: 132px;
+            width: min(350px, calc(100vw - 40px));
+            background: rgba(7, 14, 22, 0.72);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 12px;
+            backdrop-filter: blur(6px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+            color: #eef6ff;
+            z-index: 165;
+            opacity: 1;
+            transition: opacity 0.25s ease;
+        }
+
+        .chat-container.chat-faded {
+            opacity: 0;
+        }
+
+        .chat-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+        }
+
+        .chat-toggle-button {
+            border: 1px solid rgba(255, 255, 255, 0.26);
+            border-radius: 999px;
+            background: rgba(18, 34, 49, 0.82);
+            color: #ebf6ff;
+            font-family: 'CustomFont', 'Arial', sans-serif;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 4px 10px;
+            cursor: pointer;
+            text-transform: uppercase;
+        }
+
+        .chat-body {
+            padding: 7px 9px 9px;
+        }
+
+        .chat-container.chat-collapsed .chat-body {
+            display: none;
+        }
+
+        .chat-messages {
+            height: 92px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            margin-bottom: 8px;
+            padding-right: 4px;
+            font-size: 13px;
+            line-height: 1.35;
+            word-wrap: break-word;
+        }
+
+        .chat-line {
+            margin-bottom: 5px;
+        }
+
+        .chat-name {
+            color: #9ce9ff;
+            font-weight: 700;
+            margin-right: 5px;
+        }
+
+        .chat-input {
+            width: 100%;
+            box-sizing: border-box;
+            border: 1px solid rgba(255, 255, 255, 0.24);
+            border-radius: 8px;
+            background: rgba(10, 20, 32, 0.88);
+            color: #ffffff;
+            padding: 9px 10px;
+            font-family: 'CustomFont', 'Arial', sans-serif;
+            font-size: 13px;
+            outline: none;
+        }
+
+        .chat-input:focus {
+            border-color: rgba(120, 234, 255, 0.95);
+            box-shadow: 0 0 0 2px rgba(96, 214, 255, 0.2);
+        }
+
         @media (pointer: coarse) {
             .leave-match-button {
                 display: none;
+            }
+
+            .chat-container {
+                left: 12px;
+                right: 12px;
+                bottom: 132px;
+                width: auto;
+            }
+
+            .chat-messages {
+                height: 80px;
             }
         }
 
@@ -1387,18 +1509,35 @@
 
     <div id="menu">
         <h1>Boox Shoot</h1>
-        <button class="menu-button" onclick="startGame()">1v1 Match</button>
-        <button class="menu-button ffa-button" onclick="startFreeForAll()">Free For All</button>
-        <button class="menu-button character-button" onclick="showCharacter()">Character</button>
-        <button class="menu-button" onclick="showControls()">Controls</button>
-        <button id="installButton" class="menu-button">Install App</button>
-        <button id="logoutButton" class="menu-button cancel-button menu-logout-button" onclick="logoutToAuthChoice()">Log out</button>
-        <div class="patch-notes-card">
-            <div class="patch-notes-header">
-                <span>Patch Notes</span>
-                <span id="patchNotesVersion" class="patch-notes-version"></span>
+        <div id="mainMenuContent">
+            <button class="menu-button" onclick="showPlayMenu()">Play</button>
+            <button class="menu-button character-button" onclick="showCharacter()">Character</button>
+            <button class="menu-button" onclick="showControls()">Controls</button>
+            <button id="installButton" class="menu-button">Install App</button>
+            <button id="logoutButton" class="menu-button cancel-button menu-logout-button" onclick="logoutToAuthChoice()">Log out</button>
+            <div class="patch-notes-card">
+                <div class="patch-notes-header">
+                    <span>Patch Notes</span>
+                    <span id="patchNotesVersion" class="patch-notes-version"></span>
+                </div>
+                <ul id="patchNotesList" class="patch-notes-list"></ul>
             </div>
-            <ul id="patchNotesList" class="patch-notes-list"></ul>
+        </div>
+        <div id="playMenuContent" style="display: none;">
+            <div class="play-menu-title">Choose Game Mode</div>
+            <button class="menu-button" onclick="startGame()">
+                1v1 Match
+                <span class="mode-indicator" id="oneVsOneModeIndicator">Queued: 0 | Playing: 0</span>
+            </button>
+            <button class="menu-button" onclick="startTwoVsTwo()">
+                2v2 Team Match
+                <span class="mode-indicator" id="twoVsTwoModeIndicator">Queued: 0 | Playing: 0</span>
+            </button>
+            <button class="menu-button ffa-button" onclick="startFreeForAll()">
+                Free For All
+                <span class="mode-indicator" id="freeForAllModeIndicator">Queued: 0 | Playing: 0</span>
+            </button>
+            <button class="menu-button cancel-button" onclick="showMainMenu()">Back</button>
         </div>
     </div>
 
@@ -1509,7 +1648,7 @@
             </div>
             <div class="control-row">
                 <div class="control-key">Z</div>
-                <div class="control-action">Toggle Passive (King) / Detonate (Demoman)</div>
+                <div class="control-action">Use Additional Ability</div>
             </div>
         </div>
         <button class="menu-button cancel-button" onclick="showMainMenu()">Back</button>
@@ -1562,6 +1701,16 @@
                 <div class="match-end-title" id="matchEndTitle">Victory</div>
                 <div class="match-end-score" id="matchEndScore">5 - 3</div>
                 <div id="matchEndSubtitle" class="match-end-subtitle">Returning to menu...</div>
+            </div>
+        </div>
+        <div id="chatContainer" class="chat-container">
+            <div class="chat-header">
+                <span>Room Chat</span>
+                <button id="chatToggleButton" class="chat-toggle-button" type="button">Hide</button>
+            </div>
+            <div class="chat-body">
+                <div id="chatMessages" class="chat-messages"></div>
+                <input id="chatInput" class="chat-input" type="text" maxlength="180" placeholder="Press Enter to chat" />
             </div>
         </div>
         <div id="mobileHud" class="mobile-hud">
