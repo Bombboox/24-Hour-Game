@@ -20,6 +20,7 @@ class SoundManager {
         createjs.Sound.registerSound("sounds/explosion.mp3", "explosion");
         createjs.Sound.registerSound("sounds/rocket_launch.mp3", "rocket_launch");
         createjs.Sound.registerSound("sounds/zap.mp3", "zap");
+        createjs.Sound.registerSound("sounds/ambience.mp3", "ambience");
         
         this.initialized = true;
     }

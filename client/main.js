@@ -1223,6 +1223,7 @@ function requestLeaveMatch() {
 
     clearVirtualControls();
     clearLocalInputState();
+    soundManager.stop('ambience');
     socket.emit('leaveMatch');
 
     if (gameMode === '1v1' || gameMode === '2v2') {
@@ -1345,6 +1346,7 @@ function main() {
         hideAllMenus();
         gameScreen.style.display = 'flex';
         gameActive = true;
+        soundManager.playLoop('ambience', 0.12);
         resetChatForRoom();
         updateMobileHudVisibility();
         matchEndOverlay.classList.remove('show');
@@ -1428,6 +1430,7 @@ function showMainMenu() {
     resetChatForRoom();
     gameMode = '1v1';
     soundManager.stop('laser');
+    soundManager.stop('ambience');
     matchEndOverlay.classList.remove('show');
     matchEndCard.classList.remove('victory', 'defeat');
     if (matchEndSubtitle) {
@@ -3604,6 +3607,7 @@ function handleMatchEnded(data) {
 
     gameActive = false;
     soundManager.stop('laser');
+    soundManager.stop('ambience');
     matchEndTitle.textContent = data.youWon ? 'Victory' : 'Defeat';
     if (gameMode === '2v2' || data.winnerTeam) {
         const redLives = Number(data.teamLives?.red ?? gameState.teamLives?.red ?? 0);
@@ -3663,6 +3667,7 @@ function handleMatchClosed() {
         forfeitReturnTimeout = null;
     }
     soundManager.stop('laser');
+    soundManager.stop('ambience');
     showMainMenu();
 }
 
