@@ -417,25 +417,36 @@ function setupPwaInstallButton() {
 }
 
 function setupMenuAudioUnlock() {
-    if (typeof soundManager === 'undefined' || typeof soundManager.unlockAudio !== 'function') {
-        return;
-    }
+    if (!soundManager || typeof soundManager.unlockAudio !== 'function') return;
+
+    const cleanup = () => {
+        document.removeEventListener('pointerdown', tryUnlock, true);
+        document.removeEventListener('keydown', tryUnlock, true);
+    };
 
     const tryUnlock = (event) => {
-        const target = event.target;
-        if (!(target instanceof Element)) {
-            return;
+        let unlockTargetValid = false;
+        if (MENU_AUDIO_UNLOCK_SELECTOR) {
+            let targetEl = event.target;
+            if (targetEl instanceof Element && targetEl.closest(MENU_AUDIO_UNLOCK_SELECTOR)) {
+                unlockTargetValid = true;
+            }
+        } else {
+            unlockTargetValid = true;
         }
 
-        if (!target.closest(MENU_AUDIO_UNLOCK_SELECTOR)) {
-            return;
-        }
+        if (!unlockTargetValid) return;
 
         soundManager.unlockAudio();
-        if (!soundManager.isAudioUnlocked || soundManager.isAudioUnlocked()) {
-            document.removeEventListener('pointerdown', tryUnlock, true);
-            document.removeEventListener('keydown', tryUnlock, true);
-        }
+
+        let unlocked = false;
+        try {
+            unlocked = typeof soundManager.isAudioUnlocked === "function"
+                ? soundManager.isAudioUnlocked()
+                : !!soundManager.isAudioUnlocked;
+        } catch (e) {}
+
+        if (unlocked) cleanup();
     };
 
     document.addEventListener('pointerdown', tryUnlock, true);

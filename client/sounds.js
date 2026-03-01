@@ -1,4 +1,3 @@
-// Sound management using SoundJS
 class SoundManager {
     constructor() {
         this.sounds = {};
