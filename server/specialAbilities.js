@@ -702,7 +702,9 @@ class ShieldAbility extends SpecialAbility {
             w: character.radius * 2,
             h: character.radius * 2 * (40/12),
             angle: character.angle,
-            color: "blue"
+            color: "blue",
+            ownerId: character.id,
+            ownerTeam: character.team || null
         });
         
         if (gameState && gameState.obstacles) {
@@ -731,8 +733,8 @@ class Grenade extends SpecialAbility {
         });
         this.initialSpeed = options.initialSpeed ?? 16.5;
         this.acceleration = options.acceleration ?? 2.25;
-        this.accelerationTime = options.accelerationTime ?? 18;
-        this.spinSpeed = options.spinSpeed ?? 0.45;
+        this.accelerationTime = options.accelerationTime ?? 12;
+        this.spinSpeed = options.spinSpeed ?? 1.45;
     }
 
     onStart(character, gameState) {
@@ -782,6 +784,7 @@ class ShieldBarrier extends SpecialAbility {
             angle: character.angle,
             color: 'rgba(50, 180, 255, 0.25)',
             ownerId: character.id,
+            ownerTeam: character.team || null,
             health: 120,
             duration: 750
         });
@@ -810,6 +813,7 @@ class TurretAbility extends SpecialAbility {
             w: turretSize,
             h: turretSize,
             ownerId: character.id,
+            ownerTeam: character.team || null,
             health: 110,
             duration: 750
         });

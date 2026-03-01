@@ -329,6 +329,9 @@ class LaserGun extends Weapon {
                 if (obstacle.ownerId && obstacle.ownerId === playerId) {
                     continue;
                 }
+                if (ownerTeam && obstacle.ownerTeam && ownerTeam === obstacle.ownerTeam) {
+                    continue;
+                }
                 const hitObstacle = hasRotation(obstacle)
                     ? circleRotatedRectCollision(px, py, rayRadius, obstacle)
                     : circleRectCollision(px, py, rayRadius, obstacle);

@@ -3,6 +3,20 @@ const { Dash, Enlarge, Berserk, NinjaMomentum, KingGoldenDomain, BerserkerBloodr
 const { MAP_RADIUS } = require('./constants');
 const { circleRectCollision, circleObstacleCollision, resolveCircleObstacleOverlaps } = require('./collision');
 
+function isFriendlyObstacleForPlayer(player, obstacle) {
+    if (!player || !obstacle) return false;
+    if (obstacle.kind === 'shield') {
+        return false;
+    }
+    if (obstacle.ownerId && obstacle.ownerId === player.id) {
+        return true;
+    }
+    if (player.team && obstacle.ownerTeam && player.team === obstacle.ownerTeam) {
+        return true;
+    }
+    return false;
+}
+
 class Character {
     constructor(options = {x, y, radius, image, speed, maxHP, primaryWeapon, angle, damage, id}) {
         this.x = options.x || 0;
@@ -91,7 +105,7 @@ class Character {
         const newX = this.x + dx * effectiveSpeed;
         const newY = this.y + dy * effectiveSpeed;
         const collidableObstacles = obstacles.filter((obstacle) => {
-            if (obstacle?.kind === 'autoTurret' && obstacle?.ownerId === this.id) {
+            if (isFriendlyObstacleForPlayer(this, obstacle)) {
                 return false;
             }
             return true;
@@ -233,6 +247,9 @@ class Character {
             // check if position overlaps with any obstacles
             validPosition = true;
             for (const obstacle of gameState.obstacles) {
+                if (isFriendlyObstacleForPlayer(this, obstacle)) {
+                    continue;
+                }
                 if (circleObstacleCollision(x, y, this.radius, obstacle)) {
                     validPosition = false;
                     break;

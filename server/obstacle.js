@@ -21,10 +21,12 @@ class Obstacle {
 class Shield extends Obstacle {
     constructor(options = {}) {
         super(options);
+        this.kind = 'shield';
         this.health = options.health ?? 120;
         this.image = "shield.png";
         this.angle = options.angle || 0;
         this.ownerId = options.ownerId || null;
+        this.ownerTeam = options.ownerTeam || null;
         this.duration = options.duration ?? 750;
         this.age = 0;
     }
@@ -52,6 +54,7 @@ class AutoTurret extends Obstacle {
         this.headImage = 'turret_head.png';
         this.health = options.health ?? 110;
         this.ownerId = options.ownerId || null;
+        this.ownerTeam = options.ownerTeam || null;
         this.duration = options.duration ?? 750;
         this.age = 0;
         this.range = options.range ?? 520;
@@ -73,11 +76,17 @@ class AutoTurret extends Obstacle {
 
     findNearestTarget(gameState) {
         if (!gameState?.players) return null;
+        const ownerPlayer = gameState.players.find((player) => player.id === this.ownerId);
+        const ownerTeam = this.ownerTeam || ownerPlayer?.team || null;
+        if (!this.ownerTeam && ownerTeam) {
+            this.ownerTeam = ownerTeam;
+        }
 
         let nearest = null;
         let nearestDistance = Infinity;
         for (const player of gameState.players) {
             if (!player || player.id === this.ownerId || player.HP <= 0) continue;
+            if (ownerTeam && player.team && ownerTeam === player.team) continue;
             const dx = player.x - this.x;
             const dy = player.y - this.y;
             const distance = Math.sqrt(dx * dx + dy * dy);

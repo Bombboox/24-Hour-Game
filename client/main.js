@@ -82,6 +82,7 @@ const MENU_BACKDROP_FPS = 24;
 const MODE_STATUS_REFRESH_MS = 5000;
 const CHAT_IDLE_FADE_MS = 7000;
 const CHAT_MAX_MESSAGES = 60;
+const MENU_AUDIO_UNLOCK_SELECTOR = '.menu-button, .equip-option, .equip-tab, .menu-link';
 const MOVEMENT_KEY_CODES = [87, 83, 65, 68];
 const TEAM_COLORS = Object.freeze({
     red: 'rgba(255, 72, 72, 0.42)',
@@ -205,8 +206,8 @@ var gameState = {
 }
 let latestTeamLives = null;
 const SNAPSHOT_BUFFER_SIZE = 90;
-const RENDER_INTERPOLATION_DELAY_MS = 120;
-const MAX_RENDER_INTERPOLATION_DELAY_MS = 240;
+const RENDER_INTERPOLATION_DELAY_MS = 60;
+const MAX_RENDER_INTERPOLATION_DELAY_MS = 120;
 const MAX_EXTRAPOLATION_MS = 140;
 const MIN_EXTRAPOLATION_SAMPLE_MS = 12;
 const MAX_LINEAR_EXTRAPOLATION_STEP = 42;
@@ -220,6 +221,18 @@ const MAX_PREDICTION_STEP_MS = 50;
 const LOCAL_RECONCILIATION_LERP = 0.24;
 const LOCAL_RECONCILIATION_SNAP_DISTANCE = 170;
 const PREDICTION_OVERLAP_ITERATIONS = 6;
+const PREDICTED_PROJECTILE_MAX_AGE_MS = 220;
+const PREDICTED_PROJECTILE_RECONCILE_DISTANCE = 56;
+const MAX_PREDICTED_PROJECTILES = 48;
+const LOCAL_PROJECTILE_DATA_BY_WEAPON = Object.freeze({
+    'M4': { kind: 'bullet', speed: 20, radius: 3, color: 'yellow', cooldownMs: 120, pellets: 1, spread: Math.PI / 24 },
+    'Pistol': { kind: 'bullet', speed: 30, radius: 3, color: 'yellow', cooldownMs: 380, pellets: 1, spread: Math.PI / 36 },
+    'Shotgun': { kind: 'bullet', speed: 25, radius: 2, color: 'yellow', cooldownMs: 960, pellets: 3, spread: Math.PI / 5 },
+    'Sniper': { kind: 'bullet', speed: 50, radius: 4, color: 'red', cooldownMs: 3000, pellets: 1, spread: Math.PI / 180 },
+    'Rocket Launcher': { kind: 'rocket', speed: 14, radius: 12, color: '#f8a432', cooldownMs: 1360, pellets: 1, spread: Math.PI / 120 },
+    'Taser': { kind: 'bullet', speed: 37, radius: 3, color: '#4aa8ff', cooldownMs: 880, pellets: 1, spread: Math.PI / 80 },
+    'Bubble Launcher': { kind: 'bubble', speed: 6, radius: 22, color: 'rgba(90, 195, 255, 0.62)', cooldownMs: 1600, pellets: 1, spread: Math.PI / 100 }
+});
 const FALLBACK_MOVE_SPEED_BY_NAME = Object.freeze({
     Ninja: 8,
     King: 3,
@@ -255,6 +268,12 @@ let renderLoopId = null;
 let mainInitialized = false;
 let localPredictionState = null;
 let localAimAngle = 0;
+let predictedProjectiles = [];
+let localPrimaryFireHeld = false;
+let nextPredictedShotAtMs = 0;
+let lastPredictedWeaponName = '';
+let suppressServerShotAudioUntilMs = 0;
+let predictedProjectileIdCounter = 0;
 const localInputState = {
     up: false,
     down: false,
@@ -340,6 +359,7 @@ setupMobileControls();
 setupDesktopLeaveButton();
 setupChatUi();
 setupModeStatusRefresh();
+setupMenuAudioUnlock();
 initializeAuth();
 
 function sanitizePlayerSettings(settings) {
@@ -412,6 +432,32 @@ function setupPwaInstallButton() {
             position: "right"
         }).showToast();
     });
+}
+
+function setupMenuAudioUnlock() {
+    if (typeof soundManager === 'undefined' || typeof soundManager.unlockAudio !== 'function') {
+        return;
+    }
+
+    const tryUnlock = (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) {
+            return;
+        }
+
+        if (!target.closest(MENU_AUDIO_UNLOCK_SELECTOR)) {
+            return;
+        }
+
+        soundManager.unlockAudio();
+        if (!soundManager.isAudioUnlocked || soundManager.isAudioUnlocked()) {
+            document.removeEventListener('pointerdown', tryUnlock, true);
+            document.removeEventListener('keydown', tryUnlock, true);
+        }
+    };
+
+    document.addEventListener('pointerdown', tryUnlock, true);
+    document.addEventListener('keydown', tryUnlock, true);
 }
 
 function setupMobileControls() {
@@ -1179,6 +1225,8 @@ function startMobileFire() {
         return;
     }
     mobileControlState.firePressed = true;
+    localPrimaryFireHeld = true;
+    nextPredictedShotAtMs = 0;
     socket.emit('mouseDown', 0);
 }
 
@@ -1187,6 +1235,7 @@ function stopMobileFire() {
         return;
     }
     mobileControlState.firePressed = false;
+    localPrimaryFireHeld = false;
     socket.emit('mouseUp', 0);
 }
 
@@ -1346,7 +1395,7 @@ function main() {
         hideAllMenus();
         gameScreen.style.display = 'flex';
         gameActive = true;
-        soundManager.playLoop('ambience', 0.12);
+        soundManager.playLoop('ambience', 0.3);
         resetChatForRoom();
         updateMobileHudVisibility();
         matchEndOverlay.classList.remove('show');
@@ -1425,6 +1474,8 @@ function showMainMenu() {
         menuLink.style.display = 'flex';
     }
     gameActive = false;
+    localPrimaryFireHeld = false;
+    predictedProjectiles = [];
     clearVirtualControls();
     updateMobileHudVisibility();
     resetChatForRoom();
@@ -1755,6 +1806,11 @@ function resetClientCache() {
     snapshotTiming.jitterEwma = 0;
     localPredictionState = null;
     lastLocalPredictionTimestamp = null;
+    predictedProjectiles = [];
+    localPrimaryFireHeld = false;
+    nextPredictedShotAtMs = 0;
+    lastPredictedWeaponName = '';
+    suppressServerShotAudioUntilMs = 0;
     clearLocalInputState();
 }
 
@@ -1785,6 +1841,8 @@ function startRenderLoop() {
         }
 
         applyLocalPlayerPrediction(renderState, timestamp);
+        updatePredictedLocalShooting(timestamp, renderState);
+        updatePredictedProjectiles(timestamp);
         draw(renderState);
     };
 
@@ -1970,10 +2028,16 @@ function getLatestSnapshotState() {
     return snapshotBuffer[snapshotBuffer.length - 1].state;
 }
 
-function getCollidableObstacles(obstacles = [], playerId = null) {
+function getCollidableObstacles(obstacles = [], player = null) {
     return obstacles.filter((obstacle) => {
         if (!obstacle) return false;
-        if (obstacle.kind === 'autoTurret' && obstacle.ownerId === playerId) {
+        if (obstacle.kind === 'shield') {
+            return true;
+        }
+        if (player?.id && obstacle.ownerId === player.id) {
+            return false;
+        }
+        if (player?.team && obstacle.ownerTeam && player.team === obstacle.ownerTeam) {
             return false;
         }
         return true;
@@ -2138,6 +2202,153 @@ function getFallbackMoveSpeed(playerName) {
     return FALLBACK_MOVE_SPEED_BY_NAME[playerName] || 6;
 }
 
+function getLocalPredictedProjectileProfile(player) {
+    const weaponName = player?.primaryWeapon?.name || '';
+    return LOCAL_PROJECTILE_DATA_BY_WEAPON[weaponName] || null;
+}
+
+function canSpawnPredictedShot(player, profile, nowMs) {
+    if (!player || !profile || !gameActive) {
+        return false;
+    }
+    if (player.isRespawning || player.stunned) {
+        return false;
+    }
+    if (player.primaryWeapon?.isReloading) {
+        return false;
+    }
+    if (typeof player.primaryWeapon?.ammo === 'number' && player.primaryWeapon.ammo <= 0) {
+        return false;
+    }
+    return nowMs >= nextPredictedShotAtMs;
+}
+
+function playPredictedShotAudio(player) {
+    const weaponName = player?.primaryWeapon?.name;
+    if (!weaponName || weaponName === 'Laser Gun') {
+        return;
+    }
+    if (weaponName === 'Rocket Launcher') {
+        soundManager.play('rocket_launch', 0.3);
+        return;
+    }
+    soundManager.play('shoot', 0.25);
+}
+
+function spawnPredictedProjectile(player, profile, nowMs) {
+    const pelletCount = Math.max(1, profile.pellets || 1);
+    const spread = profile.spread || 0;
+
+    for (let i = 0; i < pelletCount; i++) {
+        const spreadOffset = pelletCount > 1 ? (Math.random() - 0.5) * spread : 0;
+        const angle = (typeof localAimAngle === 'number' ? localAimAngle : player.angle || 0) + spreadOffset;
+        const id = `pred_${socket.id || 'local'}_${nowMs}_${predictedProjectileIdCounter++}`;
+        predictedProjectiles.push({
+            id,
+            predicted: true,
+            playerId: socket.id || null,
+            kind: profile.kind,
+            x: player.x,
+            y: player.y,
+            angle,
+            radius: profile.radius,
+            color: profile.color,
+            active: true,
+            velocityX: Math.cos(angle) * profile.speed,
+            velocityY: Math.sin(angle) * profile.speed,
+            createdAtMs: nowMs,
+            lastUpdatedAtMs: nowMs
+        });
+    }
+
+    if (predictedProjectiles.length > MAX_PREDICTED_PROJECTILES) {
+        predictedProjectiles.splice(0, predictedProjectiles.length - MAX_PREDICTED_PROJECTILES);
+    }
+
+    nextPredictedShotAtMs = nowMs + profile.cooldownMs;
+    suppressServerShotAudioUntilMs = nowMs + 140;
+    playPredictedShotAudio(player);
+}
+
+function reconcilePredictedProjectilesWithServer(authoritativeBullets = []) {
+    if (!socket.id || predictedProjectiles.length === 0) {
+        return;
+    }
+
+    predictedProjectiles = predictedProjectiles.filter((predicted) => {
+        for (const bullet of authoritativeBullets) {
+            if (!bullet || bullet.playerId !== socket.id) {
+                continue;
+            }
+            if ((bullet.kind || 'bullet') !== (predicted.kind || 'bullet')) {
+                continue;
+            }
+            const dx = (bullet.x || 0) - predicted.x;
+            const dy = (bullet.y || 0) - predicted.y;
+            if ((dx * dx + dy * dy) <= (PREDICTED_PROJECTILE_RECONCILE_DISTANCE * PREDICTED_PROJECTILE_RECONCILE_DISTANCE)) {
+                return false;
+            }
+        }
+        return true;
+    });
+}
+
+function updatePredictedProjectiles(timestamp) {
+    const nowMs = typeof timestamp === 'number' ? timestamp : getNowMs();
+    const deltaUnitDivisor = SERVER_DELTA_TIME_DIVISOR;
+
+    for (let i = predictedProjectiles.length - 1; i >= 0; i--) {
+        const projectile = predictedProjectiles[i];
+        if (!projectile) {
+            predictedProjectiles.splice(i, 1);
+            continue;
+        }
+
+        if ((nowMs - projectile.createdAtMs) >= PREDICTED_PROJECTILE_MAX_AGE_MS) {
+            predictedProjectiles.splice(i, 1);
+            continue;
+        }
+
+        const deltaMs = Math.max(0, nowMs - (projectile.lastUpdatedAtMs || nowMs));
+        projectile.lastUpdatedAtMs = nowMs;
+        const deltaUnits = deltaMs / deltaUnitDivisor;
+        projectile.x += projectile.velocityX * deltaUnits;
+        projectile.y += projectile.velocityY * deltaUnits;
+    }
+}
+
+function updatePredictedLocalShooting(timestamp, renderState) {
+    if (!gameActive || !localPrimaryFireHeld) {
+        return;
+    }
+    if (!socket.id || !Array.isArray(renderState?.players)) {
+        return;
+    }
+
+    const nowMs = typeof timestamp === 'number' ? timestamp : getNowMs();
+    const localPlayer = renderState.players.find((player) => player.id === socket.id);
+    if (!localPlayer) {
+        return;
+    }
+
+    const profile = getLocalPredictedProjectileProfile(localPlayer);
+    if (!profile) {
+        return;
+    }
+
+    const weaponName = localPlayer.primaryWeapon?.name || '';
+    if (weaponName !== lastPredictedWeaponName) {
+        lastPredictedWeaponName = weaponName;
+        nextPredictedShotAtMs = nowMs;
+    }
+
+    let safety = 2;
+    while (canSpawnPredictedShot(localPlayer, profile, nowMs) && safety > 0) {
+        spawnPredictedProjectile(localPlayer, profile, nowMs);
+        safety -= 1;
+    }
+}
+
 function reconcileLocalPrediction(localPlayer, authoritativePlayer) {
     const errorX = authoritativePlayer.x - localPlayer.x;
     const errorY = authoritativePlayer.y - localPlayer.y;
@@ -2244,7 +2455,7 @@ function applyLocalPlayerPrediction(renderState, timestamp) {
     reconcileLocalPrediction(localPredictionState, authoritativePlayer);
     const collidableObstacles = getCollidableObstacles(
         latestSnapshotState?.obstacles || renderState.obstacles || [],
-        authoritativePlayer.id
+        authoritativePlayer
     );
     applyPredictedMovement(localPredictionState, authoritativePlayer, collidableObstacles, deltaMs);
 
@@ -2363,6 +2574,7 @@ function applyDeltaToGameState(delta) {
         for (const obstacle of gameState.obstacles) {
             clientGameStateCache.obstacles.set(obstacle.id, obstacle);
         }
+        reconcilePredictedProjectilesWithServer(gameState.bullets);
         return;
     }
     
@@ -2477,6 +2689,8 @@ function applyDeltaToGameState(delta) {
         gameState.teamLives = delta.teamLives || null;
         latestTeamLives = gameState.teamLives;
     }
+
+    reconcilePredictedProjectilesWithServer(gameState.bullets);
 }
 
 function draw(gameState) {
@@ -2635,6 +2849,9 @@ function draw(gameState) {
     
     for (const bullet of gameState.bullets) {
         drawBullet(bullet);
+    }
+    for (const projectile of predictedProjectiles) {
+        drawBullet(projectile);
     }
 
     for (const grenade of gameState.grenades) {
@@ -3455,12 +3672,19 @@ function handleMouseDown(event) {
     if (chatContainer && chatContainer.contains(event.target)) {
         return;
     }
+    if (event.button === 0) {
+        localPrimaryFireHeld = true;
+        nextPredictedShotAtMs = 0;
+    }
     socket.emit('mouseDown', event.button);
 }
 
 function handleMouseUp(event) {
     if (chatContainer && chatContainer.contains(event.target)) {
         return;
+    }
+    if (event.button === 0) {
+        localPrimaryFireHeld = false;
     }
     socket.emit('mouseUp', event.button);
 }
@@ -3555,6 +3779,11 @@ function handleGotHit() {
 }
 
 function handleFiredWeapon() {
+    const nowMs = getNowMs();
+    if (nowMs < suppressServerShotAudioUntilMs) {
+        return;
+    }
+
     const thisPlayer = gameState.players.find((player) => player.id === socket.id);
     if (thisPlayer?.primaryWeapon?.name === 'Laser Gun') {
         return;
@@ -3606,6 +3835,8 @@ function handleMatchEnded(data) {
     }
 
     gameActive = false;
+    localPrimaryFireHeld = false;
+    predictedProjectiles = [];
     soundManager.stop('laser');
     soundManager.stop('ambience');
     matchEndTitle.textContent = data.youWon ? 'Victory' : 'Defeat';
@@ -3666,6 +3897,8 @@ function handleMatchClosed() {
         clearTimeout(forfeitReturnTimeout);
         forfeitReturnTimeout = null;
     }
+    localPrimaryFireHeld = false;
+    predictedProjectiles = [];
     soundManager.stop('laser');
     soundManager.stop('ambience');
     showMainMenu();

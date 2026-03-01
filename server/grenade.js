@@ -24,7 +24,7 @@ class GrenadeProjectile {
         this.angularDrag = options.angularDrag || 0.92;
         this.minSpeed = options.minSpeed || 0.18;
         this.minAngularSpeed = options.minAngularSpeed || 0.01;
-        this.stationaryFuse = options.stationaryFuse || 35;
+        this.stationaryFuse = options.stationaryFuse || 5;
         this.stationaryTimer = 0;
         this.lifetime = options.lifetime || 120;
         this.age = 0;
@@ -42,6 +42,7 @@ class GrenadeProjectile {
 
     update(deltaTime, gameState, io = null) {
         if (!this.active) return;
+        const owner = gameState.players.find((player) => player.id === this.ownerId);
 
         this.age += deltaTime;
         if (this.age >= this.lifetime) {
@@ -81,7 +82,7 @@ class GrenadeProjectile {
             return;
         }
 
-        const obstacleHit = this.collidesWithObstacle(gameState.obstacles);
+        const obstacleHit = this.collidesWithObstacle(gameState.obstacles, owner);
         if (obstacleHit) {
             if (obstacleHit.health) {
                 obstacleHit.takeDamage(55, gameState);
@@ -105,8 +106,11 @@ class GrenadeProjectile {
         }
     }
 
-    collidesWithObstacle(obstacles = []) {
+    collidesWithObstacle(obstacles = [], owner = null) {
         for (const obstacle of obstacles) {
+            if (this.isFriendlyObstacle(obstacle, owner)) {
+                continue;
+            }
             if (hasRotation(obstacle)) {
                 if (circleRotatedRectCollision(this.x, this.y, this.radius, obstacle)) {
                     return obstacle;
@@ -119,6 +123,17 @@ class GrenadeProjectile {
             }
         }
         return null;
+    }
+
+    isFriendlyObstacle(obstacle, owner = null) {
+        if (!obstacle) return false;
+        if (obstacle.ownerId && obstacle.ownerId === this.ownerId) {
+            return true;
+        }
+        if (owner?.team && obstacle.ownerTeam && owner.team === obstacle.ownerTeam) {
+            return true;
+        }
+        return false;
     }
 
     collidesWithPlayer(players = []) {
@@ -240,12 +255,13 @@ class DemoExplosive {
         this.spin = options.spin || 0;
         this.angularVelocity = options.angularVelocity || 0.32;
         this.explosionRadius = options.explosionRadius || 155;
-        this.explosionDamage = options.explosionDamage || 25;
+        this.explosionDamage = options.explosionDamage || 30;
         this.explosionForce = options.explosionForce || 18;
     }
 
     update(deltaTime, gameState, io = null) {
         if (!this.active) return;
+        const owner = gameState.players.find((player) => player.id === this.ownerId);
         if (this.isStationary) {
             this.hiddenForEnemies = true;
             this.angularVelocity = 0;
@@ -271,7 +287,7 @@ class DemoExplosive {
             return;
         }
 
-        const obstacleHit = this.collidesWithObstacle(gameState.obstacles);
+        const obstacleHit = this.collidesWithObstacle(gameState.obstacles, owner);
         if (obstacleHit) {
             this.x = oldX;
             this.y = oldY;
@@ -285,8 +301,11 @@ class DemoExplosive {
         }
     }
 
-    collidesWithObstacle(obstacles = []) {
+    collidesWithObstacle(obstacles = [], owner = null) {
         for (const obstacle of obstacles) {
+            if (this.isFriendlyObstacle(obstacle, owner)) {
+                continue;
+            }
             if (hasRotation(obstacle)) {
                 if (circleRotatedRectCollision(this.x, this.y, this.radius, obstacle)) {
                     return obstacle;
@@ -296,6 +315,17 @@ class DemoExplosive {
             }
         }
         return null;
+    }
+
+    isFriendlyObstacle(obstacle, owner = null) {
+        if (!obstacle) return false;
+        if (obstacle.ownerId && obstacle.ownerId === this.ownerId) {
+            return true;
+        }
+        if (owner?.team && obstacle.ownerTeam && owner.team === obstacle.ownerTeam) {
+            return true;
+        }
+        return false;
     }
 
     stick() {

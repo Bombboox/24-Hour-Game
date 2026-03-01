@@ -1,5 +1,16 @@
 const { circleRectCollision, circleRotatedRectCollision, hasRotation } = require('./collision');
 
+function isFriendlyObstacleForShooter(obstacle, owner) {
+    if (!obstacle || !owner) return false;
+    if (obstacle.ownerId && obstacle.ownerId === owner.id) {
+        return true;
+    }
+    if (owner.team && obstacle.ownerTeam && owner.team === obstacle.ownerTeam) {
+        return true;
+    }
+    return false;
+}
+
 class Bullet {
     constructor(options = {x, y, radius, color, speed, angle, playerId, damage}) {
         this.x = options.x || 0;
@@ -31,6 +42,7 @@ class Bullet {
         }
 
         const obstacles = gameState.obstacles;
+        const owner = (gameState.players || []).find((player) => player.id === this.playerId);
 
         if (this.kind !== 'bubble') {
             for (const other of gameState.bullets || []) {
@@ -53,7 +65,7 @@ class Bullet {
         this.y += dy;
         
         for (const obstacle of obstacles) {
-            if (obstacle.ownerId && obstacle.ownerId === this.playerId) {
+            if (isFriendlyObstacleForShooter(obstacle, owner)) {
                 continue;
             }
             if (hasRotation(obstacle)) {

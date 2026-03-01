@@ -4,6 +4,7 @@ class SoundManager {
         this.sounds = {};
         this.initialized = false;
         this.loopInstances = new Map();
+        this.audioUnlocked = false;
     }
 
     init() {
@@ -25,8 +26,53 @@ class SoundManager {
         this.initialized = true;
     }
 
+    isAudioUnlocked() {
+        return this.audioUnlocked;
+    }
+
+    unlockAudio() {
+        if (this.audioUnlocked) {
+            return true;
+        }
+
+        if (!this.initialized) {
+            this.init();
+        }
+
+        try {
+            if (createjs.WebAudioPlugin && typeof createjs.WebAudioPlugin.playEmptySound === 'function') {
+                createjs.WebAudioPlugin.playEmptySound();
+            }
+
+            const activePlugin = createjs.Sound.activePlugin;
+            const audioContext = activePlugin && activePlugin.context;
+            if (!audioContext || typeof audioContext.resume !== 'function') {
+                this.audioUnlocked = true;
+                return this.audioUnlocked;
+            }
+
+            const resumeResult = audioContext.resume();
+            if (resumeResult && typeof resumeResult.then === 'function') {
+                resumeResult
+                    .then(() => {
+                        this.audioUnlocked = audioContext.state === 'running';
+                    })
+                    .catch(() => {
+                        this.audioUnlocked = audioContext.state === 'running';
+                    });
+            } else {
+                this.audioUnlocked = audioContext.state === 'running';
+            }
+        } catch (error) {
+            console.warn('Failed to unlock audio context.', error);
+        }
+
+        return this.audioUnlocked;
+    }
+
     play(soundId, volume = 1) {
         if (!this.initialized) this.init();
+        this.unlockAudio();
         
         try {
             const instance = createjs.Sound.play(soundId);
@@ -41,6 +87,7 @@ class SoundManager {
 
     playLoop(soundId, volume = 1) {
         if (!this.initialized) this.init();
+        this.unlockAudio();
 
         const existing = this.loopInstances.get(soundId);
         if (existing && existing.playState !== createjs.Sound.PLAY_FINISHED) {

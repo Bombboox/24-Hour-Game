@@ -140,7 +140,9 @@ class GameStateCache {
                 image: obstacle.image,
                 angle: obstacle.angle,
                 kind: obstacle.kind,
-                headImage: obstacle.headImage
+                headImage: obstacle.headImage,
+                ownerId: obstacle.ownerId || null,
+                ownerTeam: obstacle.ownerTeam || null
             })),
             gameMode: gameState.gameMode || '1v1',
             teamLives: gameState.teamLives || null,
@@ -326,7 +328,9 @@ class GameStateCache {
                current.health !== previous.health ||
                current.image !== previous.image ||
                current.kind !== previous.kind ||
-               current.headImage !== previous.headImage;
+               current.headImage !== previous.headImage ||
+               current.ownerId !== previous.ownerId ||
+               current.ownerTeam !== previous.ownerTeam;
     }
 
     updateAndGetDelta(gameState) {
