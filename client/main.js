@@ -88,6 +88,9 @@ const TEAM_COLORS = Object.freeze({
     red: 'rgba(255, 72, 72, 0.42)',
     blue: 'rgba(86, 158, 255, 0.42)'
 });
+const AMBIENCE_VOLUME = 0.3;
+const AMBIENCE_START_RETRY_MS = 220;
+const AMBIENCE_START_MAX_ATTEMPTS = 12;
 
 const playerImages = {
     King: new Image(),
@@ -279,6 +282,7 @@ var gameMode = '1v1'; // Track current game mode
 const ONE_VS_ONE_KILL_TARGET = 5;
 let matchEndTimeout = null;
 let forfeitReturnTimeout = null;
+let ambienceStartRetryTimer = null;
 const SCORE_POPUP_VISIBLE_MS = 2600;
 const SCORE_POPUP_FADE_MS = 900;
 let scorePopupShownAt = 0;
@@ -1251,6 +1255,7 @@ function requestLeaveMatch() {
 
     clearVirtualControls();
     clearLocalInputState();
+    clearAmbienceStartRetry();
     soundManager.stop('ambience');
     socket.emit('leaveMatch');
 
@@ -1360,6 +1365,42 @@ function updateMobileHudVisibility() {
     mobileHud.style.display = visible ? 'block' : 'none';
 }
 
+function clearAmbienceStartRetry() {
+    if (!ambienceStartRetryTimer) {
+        return;
+    }
+    clearTimeout(ambienceStartRetryTimer);
+    ambienceStartRetryTimer = null;
+}
+
+function startMatchAmbience() {
+    clearAmbienceStartRetry();
+
+    let attemptCount = 0;
+    const tryStart = () => {
+        if (!gameActive) {
+            clearAmbienceStartRetry();
+            return;
+        }
+
+        soundManager.playLoop('ambience', AMBIENCE_VOLUME);
+        if (soundManager.isLoopPlaying('ambience')) {
+            clearAmbienceStartRetry();
+            return;
+        }
+
+        attemptCount += 1;
+        if (attemptCount >= AMBIENCE_START_MAX_ATTEMPTS) {
+            clearAmbienceStartRetry();
+            return;
+        }
+
+        ambienceStartRetryTimer = setTimeout(tryStart, AMBIENCE_START_RETRY_MS);
+    };
+
+    tryStart();
+}
+
 function main() {
     if (mainInitialized) {
         return;
@@ -1374,7 +1415,7 @@ function main() {
         hideAllMenus();
         gameScreen.style.display = 'flex';
         gameActive = true;
-        soundManager.playLoop('ambience', 0.3);
+        startMatchAmbience();
         resetChatForRoom();
         updateMobileHudVisibility();
         matchEndOverlay.classList.remove('show');
@@ -1458,6 +1499,7 @@ function showMainMenu() {
     resetChatForRoom();
     gameMode = '1v1';
     soundManager.stop('laser');
+    clearAmbienceStartRetry();
     soundManager.stop('ambience');
     matchEndOverlay.classList.remove('show');
     matchEndCard.classList.remove('victory', 'defeat');
@@ -3641,6 +3683,7 @@ function handleMatchEnded(data) {
 
     gameActive = false;
     soundManager.stop('laser');
+    clearAmbienceStartRetry();
     soundManager.stop('ambience');
     matchEndTitle.textContent = data.youWon ? 'Victory' : 'Defeat';
     if (gameMode === '2v2' || data.winnerTeam) {
@@ -3701,6 +3744,7 @@ function handleMatchClosed() {
         forfeitReturnTimeout = null;
     }
     soundManager.stop('laser');
+    clearAmbienceStartRetry();
     soundManager.stop('ambience');
     showMainMenu();
 }

@@ -737,6 +737,80 @@ async function resolveSocketIdentity(socket) {
     }
 }
 
+function isSameAccountIdentity(leftIdentity, rightIdentity) {
+    if (!leftIdentity || !rightIdentity) {
+        return false;
+    }
+
+    if (leftIdentity.mode !== 'account' || rightIdentity.mode !== 'account') {
+        return false;
+    }
+
+    if (!leftIdentity.accountId || !rightIdentity.accountId) {
+        return false;
+    }
+
+    return leftIdentity.accountId === rightIdentity.accountId;
+}
+
+function getAccountActiveRooms(identity, excludedSocketId = null) {
+    if (!identity || identity.mode !== 'account' || !identity.accountId) {
+        return [];
+    }
+
+    const rooms = [];
+    const seen = new Set();
+
+    for (const [socketId, roomName] of clientRooms.entries()) {
+        if (excludedSocketId && socketId === excludedSocketId) {
+            continue;
+        }
+
+        const otherIdentity = socketIdentities.get(socketId);
+        if (!isSameAccountIdentity(identity, otherIdentity)) {
+            continue;
+        }
+
+        if (!seen.has(roomName)) {
+            seen.add(roomName);
+            rooms.push(roomName);
+        }
+    }
+
+    return rooms;
+}
+
+function normalizeHostHeader(hostHeader = '') {
+    const value = `${hostHeader || ''}`.trim().toLowerCase();
+    if (!value) {
+        return '';
+    }
+
+    const firstHost = value.split(',')[0].trim();
+    if (!firstHost) {
+        return '';
+    }
+
+    if (firstHost.startsWith('[')) {
+        const closingBracketIndex = firstHost.indexOf(']');
+        if (closingBracketIndex > 1) {
+            return firstHost.slice(1, closingBracketIndex);
+        }
+    }
+
+    const colonCount = (firstHost.match(/:/g) || []).length;
+    if (colonCount === 1) {
+        return firstHost.split(':')[0];
+    }
+
+    return firstHost;
+}
+
+function isSocketFromLocalhost(socket) {
+    const normalizedHost = normalizeHostHeader(socket?.requestHost || '');
+    return normalizedHost === 'localhost' || normalizedHost === '127.0.0.1' || normalizedHost === '::1';
+}
+
 // Health monitoring
 const healthMetrics = {
     connections: 0,
@@ -971,11 +1045,13 @@ function createSocketFacade(ws, socketId) {
     const handlers = new Map();
     const joinedTopics = new Set();
     const sessionToken = ws.getUserData()?.sessionToken || '';
+    const requestHost = ws.getUserData()?.requestHost || '';
 
     const socket = {
         id: socketId,
         number: null,
         sessionToken,
+        requestHost,
         emit(event, payload) {
             sendSocketPacket(ws, event, payload);
         },
@@ -1032,8 +1108,9 @@ function bootstrapWebSocketRoutes() {
             const sessionToken = typeof cookies[SESSION_COOKIE_NAME] === 'string'
                 ? cookies[SESSION_COOKIE_NAME]
                 : '';
+            const requestHost = req.getHeader('host') || '';
             res.upgrade(
-                { socketId, sessionToken },
+                { socketId, sessionToken, requestHost },
                 req.getHeader('sec-websocket-key'),
                 req.getHeader('sec-websocket-protocol'),
                 req.getHeader('sec-websocket-extensions'),
@@ -1343,12 +1420,22 @@ function createPlayer(characterType, weaponType, secondaryWeaponType, sharedAbil
     return player;
 }
 
-function findAvailableRoom(seekerElo = DEFAULT_ELO) {
+function findAvailableRoom(seekerElo = DEFAULT_ELO, options = {}) {
+    const seekerIdentity = options.seekerIdentity || null;
+    const allowSelfMatch = options.allowSelfMatch === true;
     let selectedRoomName = null;
     let bestDelta = Number.POSITIVE_INFINITY;
 
     for (const [roomName, gameState] of state.entries()) {
         if (gameState.players.length !== 1 || gameState.gameMode !== '1v1' || gameState.matchEnded) {
+            continue;
+        }
+
+        const waitingPlayerId = gameState.players[0]?.id;
+        const waitingIdentity = waitingPlayerId
+            ? (gameState.playerRatings?.[waitingPlayerId] || socketIdentities.get(waitingPlayerId))
+            : null;
+        if (!allowSelfMatch && isSameAccountIdentity(waitingIdentity, seekerIdentity)) {
             continue;
         }
 
@@ -1646,7 +1733,40 @@ io.on('connection', (socket) => {
             }
             
             const identity = await resolveSocketIdentity(socket);
-            let roomName = findAvailableRoom(identity.effectiveElo);
+            const localhostSelfMatchAllowed = isSocketFromLocalhost(socket);
+            const activeAccountRooms = getAccountActiveRooms(identity, socket.id);
+            let roomName = null;
+
+            if (activeAccountRooms.length > 0) {
+                const selfMatchRoomName = activeAccountRooms.find((candidateRoomName) => {
+                    const candidateRoomState = state.get(candidateRoomName);
+                    if (!candidateRoomState || candidateRoomState.gameMode !== '1v1' || candidateRoomState.matchEnded) {
+                        return false;
+                    }
+                    if (candidateRoomState.players.length !== 1) {
+                        return false;
+                    }
+
+                    const waitingPlayerId = candidateRoomState.players[0]?.id;
+                    const waitingIdentity = waitingPlayerId
+                        ? (candidateRoomState.playerRatings?.[waitingPlayerId] || socketIdentities.get(waitingPlayerId))
+                        : null;
+
+                    return isSameAccountIdentity(waitingIdentity, identity);
+                });
+
+                if (!localhostSelfMatchAllowed || !selfMatchRoomName || activeAccountRooms.length > 1) {
+                    socket.emit('error', 'Already in a match or searching for one');
+                    return;
+                }
+
+                roomName = selfMatchRoomName;
+            } else {
+                roomName = findAvailableRoom(identity.effectiveElo, {
+                    seekerIdentity: identity,
+                    allowSelfMatch: localhostSelfMatchAllowed
+                });
+            }
             
             if (roomName) {
                 clientRooms.set(socket.id, roomName);
@@ -1711,7 +1831,7 @@ io.on('connection', (socket) => {
         }
     };
 
-    const handleFindFreeForAll = (data) => {
+    const handleFindFreeForAll = async (data) => {
         try {
             if (isRateLimited(socket.id, 'findFreeForAll')) {
                 socket.emit('error', 'Rate limit exceeded. Please try again later.');
@@ -1720,6 +1840,12 @@ io.on('connection', (socket) => {
             
             if (clientRooms.has(socket.id)) {
                 socket.emit('error', 'Already in a match');
+                return;
+            }
+
+            const identity = await resolveSocketIdentity(socket);
+            if (getAccountActiveRooms(identity, socket.id).length > 0) {
+                socket.emit('error', 'Already in a match or searching for one');
                 return;
             }
 
@@ -1764,7 +1890,7 @@ io.on('connection', (socket) => {
         }
     };
 
-    const handleFindTwoVsTwo = (data) => {
+    const handleFindTwoVsTwo = async (data) => {
         try {
             if (isRateLimited(socket.id, 'findTwoVsTwo')) {
                 socket.emit('error', 'Rate limit exceeded. Please try again later.');
@@ -1772,6 +1898,12 @@ io.on('connection', (socket) => {
             }
 
             if (clientRooms.has(socket.id)) {
+                socket.emit('error', 'Already in a match or searching for one');
+                return;
+            }
+
+            const identity = await resolveSocketIdentity(socket);
+            if (getAccountActiveRooms(identity, socket.id).length > 0) {
                 socket.emit('error', 'Already in a match or searching for one');
                 return;
             }

@@ -90,7 +90,7 @@ class SoundManager {
         this.unlockAudio();
 
         const existing = this.loopInstances.get(soundId);
-        if (existing && existing.playState !== createjs.Sound.PLAY_FINISHED) {
+        if (this.isLoopPlaying(soundId) && existing) {
             existing.volume = volume;
             return existing;
         }
@@ -99,12 +99,33 @@ class SoundManager {
             const instance = createjs.Sound.play(soundId, { loop: -1 });
             if (instance) {
                 instance.volume = volume;
+                if (instance.playState === createjs.Sound.PLAY_FAILED) {
+                    this.loopInstances.delete(soundId);
+                    return null;
+                }
                 this.loopInstances.set(soundId, instance);
             }
             return instance;
         } catch (error) {
             console.warn(`Failed to play looped sound: ${soundId}`, error);
         }
+    }
+
+    isLoopPlaying(soundId) {
+        const instance = this.loopInstances.get(soundId);
+        if (!instance) {
+            return false;
+        }
+
+        if (
+            instance.playState === createjs.Sound.PLAY_FINISHED ||
+            instance.playState === createjs.Sound.PLAY_FAILED
+        ) {
+            this.loopInstances.delete(soundId);
+            return false;
+        }
+
+        return true;
     }
 
     stop(soundId) {
