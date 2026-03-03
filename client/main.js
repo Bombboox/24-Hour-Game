@@ -122,6 +122,203 @@ playerImages.TurretBase.src = 'sprites/turret_base.png';
 playerImages.TurretHead.src = 'sprites/turret_head.png';
 obstacleImages.shield.src = 'sprites/shield.png';
 
+const CHARACTER_LOADOUT_INFO = Object.freeze({
+    berserker: {
+        title: 'Berserker',
+        subtitle: 'Character',
+        description: 'Close-range bruiser with high damage and strong sustain windows.',
+        preview: { type: 'playerImage', key: 'Berserker' },
+        stats: [
+            { label: 'HP', value: '125' },
+            { label: 'Speed', value: '6.0' },
+            { label: 'Damage', value: 'x2.0' }
+        ]
+    },
+    ninja: {
+        title: 'Ninja',
+        subtitle: 'Character',
+        description: 'Fast assassin focused on mobility and burst picks.',
+        preview: { type: 'playerImage', key: 'Ninja' },
+        stats: [
+            { label: 'HP', value: '85' },
+            { label: 'Speed', value: '8.0' },
+            { label: 'Damage', value: 'x1.2' }
+        ]
+    },
+    king: {
+        title: 'King',
+        subtitle: 'Character',
+        description: 'Durable frontline anchor with strong team-zone pressure.',
+        preview: { type: 'playerImage', key: 'King' },
+        stats: [
+            { label: 'HP', value: '200' },
+            { label: 'Speed', value: '3.0' },
+            { label: 'Damage', value: 'x1.5' }
+        ]
+    },
+    demoman: {
+        title: 'Demoman',
+        subtitle: 'Character',
+        description: 'Area-control fighter with explosive zoning tools.',
+        preview: { type: 'playerImage', key: 'Demoman' },
+        stats: [
+            { label: 'HP', value: '150' },
+            { label: 'Speed', value: '5.5' },
+            { label: 'Damage', value: 'x1.15' }
+        ]
+    },
+    reaver: {
+        title: 'Reaver',
+        subtitle: 'Character',
+        description: 'Skirmisher that snowballs through sustained pressure.',
+        preview: { type: 'playerImage', key: 'Reaver' },
+        stats: [
+            { label: 'HP', value: '125' },
+            { label: 'Speed', value: '5.8' },
+            { label: 'Damage', value: 'x1.0' }
+        ]
+    }
+});
+
+const WEAPON_LOADOUT_INFO = Object.freeze({
+    m4: {
+        title: 'M4',
+        subtitle: 'Weapon',
+        stats: [
+            { label: 'Damage', value: '8' },
+            { label: 'Fire Rate', value: '13.3 /s' },
+            { label: 'Mag', value: '30' },
+            { label: 'Reload', value: '0.64s' }
+        ]
+    },
+    pistol: {
+        title: 'Pistol',
+        subtitle: 'Weapon',
+        stats: [
+            { label: 'Damage', value: '18' },
+            { label: 'Fire Rate', value: '4.2 /s' },
+            { label: 'Mag', value: '15' },
+            { label: 'Reload', value: '0.63s' }
+        ]
+    },
+    shotgun: {
+        title: 'Shotgun',
+        subtitle: 'Weapon',
+        stats: [
+            { label: 'Damage', value: '8 x 6 pellets' },
+            { label: 'Fire Rate', value: '1.7 /s' },
+            { label: 'Mag', value: '8' },
+            { label: 'Reload', value: '0.88s' }
+        ]
+    },
+    sniper: {
+        title: 'Sniper',
+        subtitle: 'Weapon',
+        stats: [
+            { label: 'Damage', value: '35' },
+            { label: 'Fire Rate', value: '0.5 /s' },
+            { label: 'Mag', value: '5' },
+            { label: 'Reload', value: '0.89s' }
+        ]
+    },
+    laser: {
+        title: 'Laser Gun',
+        subtitle: 'Weapon',
+        stats: [
+            { label: 'Damage', value: '0.78 -> 1.75' },
+            { label: 'Fire Rate', value: '40.0 /s' },
+            { label: 'Mag', value: '190' },
+            { label: 'Reload', value: '0.85s' }
+        ]
+    },
+    taser: {
+        title: 'Taser',
+        subtitle: 'Weapon',
+        stats: [
+            { label: 'Damage', value: '10' },
+            { label: 'Fire Rate', value: '1.8 /s' },
+            { label: 'Mag', value: '1' },
+            { label: 'Reload', value: '2.63s' }
+        ]
+    },
+    rocket: {
+        title: 'Rocket Launcher',
+        subtitle: 'Weapon',
+        stats: [
+            { label: 'Damage', value: '48 + splash' },
+            { label: 'Fire Rate', value: '1.2 /s' },
+            { label: 'Mag', value: '3' },
+            { label: 'Reload', value: '1.05s' }
+        ]
+    },
+    bubble: {
+        title: 'Bubble Launcher',
+        subtitle: 'Weapon',
+        stats: [
+            { label: 'Damage', value: '50' },
+            { label: 'Fire Rate', value: '1.0 /s' },
+            { label: 'Mag', value: '2' },
+            { label: 'Reload', value: '1.95s' }
+        ]
+    }
+});
+
+const SHARED_ABILITY_LOADOUT_INFO = Object.freeze({
+    grenade: {
+        title: 'Grenade',
+        subtitle: 'Shared Ability',
+        description: 'Throw a fast grenade that accelerates before detonation.',
+        preview: { type: 'playerImage', key: 'Grenade' },
+        stats: [
+            { label: 'Cooldown', value: '4.5s' },
+            { label: 'Type', value: 'Projectile explosion' }
+        ]
+    },
+    invisibility: {
+        title: 'Invisibility',
+        subtitle: 'Shared Ability',
+        description: 'Become invisible for a short duration until it expires.',
+        preview: { type: 'glyph', label: 'INVIS' },
+        stats: [
+            { label: 'Duration', value: '6.3s' },
+            { label: 'Cooldown', value: '6.5s' }
+        ]
+    },
+    shield: {
+        title: 'Shield',
+        subtitle: 'Shared Ability',
+        description: 'Deploy a forward barrier to block incoming damage.',
+        preview: { type: 'obstacleImage', key: 'shield' },
+        stats: [
+            { label: 'Health', value: '120' },
+            { label: 'Duration', value: '18.8s' },
+            { label: 'Cooldown', value: '9.0s' }
+        ]
+    },
+    turret: {
+        title: 'Auto Turret',
+        subtitle: 'Shared Ability',
+        description: 'Place a turret that attacks enemies in range.',
+        preview: { type: 'playerImage', key: 'TurretHead' },
+        stats: [
+            { label: 'Health', value: '110' },
+            { label: 'Duration', value: '18.8s' },
+            { label: 'Cooldown', value: '9.0s' }
+        ]
+    },
+    healingcircle: {
+        title: 'Healing Circle',
+        subtitle: 'Shared Ability',
+        description: 'Create a zone that heals while you stay inside it.',
+        preview: { type: 'ring' },
+        stats: [
+            { label: 'Heal Rate', value: '5% max HP/s' },
+            { label: 'Duration', value: '3.8s' },
+            { label: 'Cooldown', value: '9.0s' }
+        ]
+    }
+});
+
 class WebSocketGameClient {
     constructor() {
         this.id = null;
@@ -296,6 +493,9 @@ let deferredInstallPrompt = null;
 let modeStatusRefreshTimer = null;
 let chatFadeTimer = null;
 let chatHiddenByUser = false;
+let loadoutTooltipElement = null;
+let loadoutTooltipActiveButton = null;
+let loadoutTooltipsBound = false;
 let authState = {
     initialized: false,
     authenticated: false,
@@ -346,6 +546,7 @@ setupDesktopLeaveButton();
 setupChatUi();
 setupModeStatusRefresh();
 setupMenuAudioUnlock();
+setupLoadoutTooltips();
 initializeAuth();
 
 function sanitizePlayerSettings(settings) {
@@ -944,6 +1145,7 @@ function showAuthChoiceMenu() {
     if (menuLink) {
         menuLink.style.display = 'none';
     }
+    hideLoadoutTooltip();
 }
 
 function showRegisterMenu() {
@@ -1590,6 +1792,212 @@ function showEquipmentTab(tabName) {
 
     document.getElementById(selectedTab.tabId)?.classList.add('active');
     document.getElementById(selectedTab.panelId)?.classList.add('active');
+}
+
+function getLoadoutTooltipData(type, value) {
+    if (!value) {
+        return null;
+    }
+
+    if (type === 'character') {
+        return CHARACTER_LOADOUT_INFO[value] || null;
+    }
+
+    if (type === 'weapon' || type === 'secondary') {
+        return WEAPON_LOADOUT_INFO[value] || null;
+    }
+
+    if (type === 'sharedAbility') {
+        return SHARED_ABILITY_LOADOUT_INFO[value] || null;
+    }
+
+    return null;
+}
+
+function getLoadoutTooltipElement() {
+    if (loadoutTooltipElement) {
+        return loadoutTooltipElement;
+    }
+
+    const tooltip = document.createElement('div');
+    tooltip.id = 'loadoutTooltip';
+    tooltip.className = 'loadout-tooltip';
+    tooltip.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(tooltip);
+    loadoutTooltipElement = tooltip;
+    return loadoutTooltipElement;
+}
+
+function renderLoadoutTooltipPreview(preview, title) {
+    if (!preview || typeof preview !== 'object') {
+        return `<div class="loadout-tooltip-glyph">${escapeHtml((title || '?').slice(0, 2).toUpperCase())}</div>`;
+    }
+
+    if (preview.type === 'playerImage') {
+        const image = playerImages[preview.key];
+        if (image?.src) {
+            return `<img class="loadout-tooltip-preview-image" src="${escapeHtml(image.src)}" alt="${escapeHtml(title || '')}" />`;
+        }
+    }
+
+    if (preview.type === 'obstacleImage') {
+        const image = obstacleImages[preview.key];
+        if (image?.src) {
+            return `<img class="loadout-tooltip-preview-image" src="${escapeHtml(image.src)}" alt="${escapeHtml(title || '')}" />`;
+        }
+    }
+
+    if (preview.type === 'ring') {
+        return '<div class="loadout-tooltip-ring"></div>';
+    }
+
+    if (preview.type === 'glyph') {
+        return `<div class="loadout-tooltip-glyph">${escapeHtml(preview.label || '')}</div>`;
+    }
+
+    return `<div class="loadout-tooltip-glyph">${escapeHtml((title || '?').slice(0, 2).toUpperCase())}</div>`;
+}
+
+function createLoadoutTooltipMarkup(data) {
+    if (!data) {
+        return '';
+    }
+
+    const statsMarkup = Array.isArray(data.stats) && data.stats.length > 0
+        ? data.stats.map((stat) => (
+            `<div class="loadout-tooltip-stat-row">
+                <span class="loadout-tooltip-stat-label">${escapeHtml(stat.label || '')}</span>
+                <span class="loadout-tooltip-stat-value">${escapeHtml(stat.value || '')}</span>
+            </div>`
+        )).join('')
+        : '';
+
+    const descriptionMarkup = data.description
+        ? `<div class="loadout-tooltip-description">${escapeHtml(data.description)}</div>`
+        : '';
+
+    return `
+        <div class="loadout-tooltip-header">
+            <div class="loadout-tooltip-preview">
+                ${renderLoadoutTooltipPreview(data.preview, data.title)}
+            </div>
+            <div class="loadout-tooltip-heading">
+                <div class="loadout-tooltip-title">${escapeHtml(data.title || '')}</div>
+                <div class="loadout-tooltip-subtitle">${escapeHtml(data.subtitle || '')}</div>
+            </div>
+        </div>
+        ${descriptionMarkup}
+        <div class="loadout-tooltip-stats">${statsMarkup}</div>
+    `;
+}
+
+function positionLoadoutTooltip(anchorX, anchorY) {
+    const tooltip = getLoadoutTooltipElement();
+    const cursorOffset = 14;
+    const viewportPadding = 8;
+    const rect = tooltip.getBoundingClientRect();
+
+    let x = anchorX + cursorOffset;
+    let y = anchorY + cursorOffset;
+
+    if (x + rect.width > window.innerWidth - viewportPadding) {
+        x = anchorX - rect.width - cursorOffset;
+    }
+    if (x < viewportPadding) {
+        x = viewportPadding;
+    }
+
+    if (y + rect.height > window.innerHeight - viewportPadding) {
+        y = anchorY - rect.height - cursorOffset;
+    }
+    if (y < viewportPadding) {
+        y = viewportPadding;
+    }
+
+    tooltip.style.left = `${x}px`;
+    tooltip.style.top = `${y}px`;
+}
+
+function showLoadoutTooltipForButton(button, anchorX = null, anchorY = null) {
+    if (!button) {
+        return;
+    }
+
+    const data = getLoadoutTooltipData(button.dataset.type, button.dataset.value);
+    if (!data) {
+        hideLoadoutTooltip();
+        return;
+    }
+
+    const tooltip = getLoadoutTooltipElement();
+    tooltip.innerHTML = createLoadoutTooltipMarkup(data);
+    tooltip.classList.add('show');
+    tooltip.setAttribute('aria-hidden', 'false');
+
+    const buttonRect = button.getBoundingClientRect();
+    const fallbackX = buttonRect.right;
+    const fallbackY = buttonRect.top + (buttonRect.height / 2);
+    const nextX = Number.isFinite(Number(anchorX)) ? Number(anchorX) : fallbackX;
+    const nextY = Number.isFinite(Number(anchorY)) ? Number(anchorY) : fallbackY;
+    positionLoadoutTooltip(nextX, nextY);
+    loadoutTooltipActiveButton = button;
+}
+
+function hideLoadoutTooltip() {
+    if (!loadoutTooltipElement) {
+        loadoutTooltipActiveButton = null;
+        return;
+    }
+
+    loadoutTooltipElement.classList.remove('show');
+    loadoutTooltipElement.setAttribute('aria-hidden', 'true');
+    loadoutTooltipActiveButton = null;
+}
+
+function setupLoadoutTooltips() {
+    if (loadoutTooltipsBound || !characterMenu) {
+        return;
+    }
+
+    const optionButtons = characterMenu.querySelectorAll('.equip-option');
+    if (optionButtons.length === 0) {
+        return;
+    }
+
+    optionButtons.forEach((button) => {
+        button.addEventListener('pointerenter', (event) => {
+            if (event.pointerType === 'touch') {
+                return;
+            }
+            showLoadoutTooltipForButton(button, event.clientX, event.clientY);
+        });
+
+        button.addEventListener('pointermove', (event) => {
+            if (event.pointerType === 'touch' || loadoutTooltipActiveButton !== button) {
+                return;
+            }
+            positionLoadoutTooltip(event.clientX, event.clientY);
+        });
+
+        button.addEventListener('pointerleave', () => {
+            if (loadoutTooltipActiveButton === button) {
+                hideLoadoutTooltip();
+            }
+        });
+
+        button.addEventListener('focus', () => {
+            showLoadoutTooltipForButton(button);
+        });
+
+        button.addEventListener('blur', () => {
+            if (loadoutTooltipActiveButton === button) {
+                hideLoadoutTooltip();
+            }
+        });
+    });
+
+    window.addEventListener('resize', hideLoadoutTooltip);
+    loadoutTooltipsBound = true;
 }
 
 function syncLoadoutSelectionUI() {
