@@ -643,44 +643,38 @@ class Berserk extends SpecialAbility {
             duration: 150,
             ...options
         });
-        this.originalDamage = null;
-        this.originalFireCooldown = null;
+        this.originalWeaponStats = new WeakMap();
         this.damageMultiplier = 1.2;
         this.fireCooldownMultiplier = 0.5;
     }
 
     onStart(character) {
-        if (character.primaryWeapon) {
-            this.originalDamage = character.primaryWeapon.damage;
-            this.originalFireCooldown = character.primaryWeapon.fireCooldown;
-            
-            character.primaryWeapon.damage = this.originalDamage * this.damageMultiplier;
-            character.primaryWeapon.fireCooldown = this.originalFireCooldown * this.fireCooldownMultiplier;
-            character.primaryWeapon.ammo = 9999;
-        }
-        if (character.secondaryWeapon) {
-            this.originalSecondaryDamage = character.secondaryWeapon.damage;
-            this.originalSecondaryFireCooldown = character.secondaryWeapon.fireCooldown;
-
-            character.secondaryWeapon.damage = this.originalSecondaryDamage * this.damageMultiplier;
-            character.secondaryWeapon.fireCooldown = this.originalSecondaryFireCooldown * this.fireCooldownMultiplier;
-            character.secondaryWeapon.ammo = 9999;
+        this.originalWeaponStats = new WeakMap();
+        const weapons = [character.primaryWeapon, character.secondaryWeapon];
+        for (const weapon of weapons) {
+            if (!weapon || this.originalWeaponStats.has(weapon)) continue;
+            this.originalWeaponStats.set(weapon, {
+                damage: weapon.damage,
+                fireCooldown: weapon.fireCooldown
+            });
+            weapon.damage = weapon.damage * this.damageMultiplier;
+            weapon.fireCooldown = weapon.fireCooldown * this.fireCooldownMultiplier;
+            weapon.ammo = 9999;
         }
         character.berserked = true;
     }
 
     onEnd(character) {
-        if (character.primaryWeapon && this.originalDamage !== null && this.originalFireCooldown !== null) {
-            character.primaryWeapon.damage = this.originalDamage;
-            character.primaryWeapon.fireCooldown = this.originalFireCooldown;
-            character.primaryWeapon.ammo = character.primaryWeapon.maxAmmo;
-        }
-        if (character.secondaryWeapon && this.originalSecondaryDamage !== undefined && this.originalSecondaryFireCooldown !== undefined) {
-            character.secondaryWeapon.damage = this.originalSecondaryDamage;
-            character.secondaryWeapon.fireCooldown = this.originalSecondaryFireCooldown;
-            character.secondaryWeapon.ammo = character.secondaryWeapon.maxAmmo;
+        const weapons = [character.primaryWeapon, character.secondaryWeapon];
+        for (const weapon of weapons) {
+            if (!weapon || !this.originalWeaponStats.has(weapon)) continue;
+            const original = this.originalWeaponStats.get(weapon);
+            weapon.damage = original.damage;
+            weapon.fireCooldown = original.fireCooldown;
+            weapon.ammo = weapon.maxAmmo;
         }
         character.berserked = false;
+        this.originalWeaponStats = new WeakMap();
     }
 }
 

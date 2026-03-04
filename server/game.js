@@ -120,6 +120,24 @@ function gameLoop(gameState, deltaTime, io) {
             }
             continue;
         }
+        if (player.burnEffects?.length) {
+            const nextBurnEffects = [];
+            for (const effect of player.burnEffects) {
+                const remaining = Math.max(0, (effect.timer || 0) - deltaTime);
+                if (remaining <= 0) continue;
+                const burnDps = Math.max(0, Number(effect.damagePerSecond) || 0);
+                if (burnDps > 0) {
+                    const burnDamage = burnDps * (deltaTime / 25);
+                    player.takeDamage(burnDamage, effect.sourceId || null);
+                }
+                nextBurnEffects.push({
+                    timer: remaining,
+                    sourceId: effect.sourceId || null,
+                    damagePerSecond: burnDps
+                });
+            }
+            player.burnEffects = nextBurnEffects;
+        }
         if (player.reaverDotEffects?.length) {
             const dotDamagePerSecond = 5;
             const dotDamage = dotDamagePerSecond * (deltaTime / 25);
@@ -375,6 +393,10 @@ function gameLoop(gameState, deltaTime, io) {
             }
  
             if (player.checkCircleCircleCollision(player.x, player.y, player.radius, bullet.x, bullet.y, bullet.radius)) {
+                if (bullet.hitPlayers?.has(player.id)) {
+                    continue;
+                }
+
                 if (bullet.kind === 'rocket' && typeof bullet.explode === 'function') {
                     bullet.explode(gameState, io);
                     if (hitter) {
@@ -390,7 +412,21 @@ function gameLoop(gameState, deltaTime, io) {
                 if (damageDealt > 0 && bullet.stunDuration > 0) {
                     player.stunnedTimer = Math.max(player.stunnedTimer || 0, bullet.stunDuration);
                 }
-                bullet.destroy(gameState);
+                bullet.hitPlayers?.add(player.id);
+                if (damageDealt > 0 && bullet.burnDuration > 0 && bullet.burnDamagePerSecond > 0) {
+                    player.burnEffects = player.burnEffects || [];
+                    player.burnEffects = player.burnEffects.filter((effect) => {
+                        return effect.sourceId !== hitter;
+                    });
+                    player.burnEffects.push({
+                        timer: bullet.burnDuration,
+                        sourceId: hitter || null,
+                        damagePerSecond: bullet.burnDamagePerSecond
+                    });
+                }
+                if (!bullet.piercePlayers) {
+                    bullet.destroy(gameState);
+                }
                 if (damageDealt > 0 && hitter) {
                     io.to(hitter).emit('hit');
                     io.to(player.id).emit('gotHit');

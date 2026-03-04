@@ -90,7 +90,7 @@ class Shotgun extends Weapon {
             damage: options.damage || 8,
             bulletSpeed: options.bulletSpeed || 25,
             fireCooldown: options.fireCooldown || 24,
-            spread: options.spread || Math.PI / 5, 
+            spread: options.spread || Math.PI / 10, 
             offsetDistance: options.offsetDistance || 22,
             ammo: options.ammo || 8,
             maxAmmo: options.maxAmmo || 8,
@@ -595,6 +595,61 @@ class BubbleLauncher extends Weapon {
     }
 }
 
+class Flamethrower extends Weapon {
+    constructor(options = {}) {
+        super({
+            damage: options.damage || 2.2,
+            bulletSpeed: options.bulletSpeed || 14,
+            fireCooldown: options.fireCooldown || 1.6,
+            spread: options.spread || Math.PI / 9,
+            offsetDistance: options.offsetDistance || 20,
+            ammo: options.ammo || 65,
+            maxAmmo: options.maxAmmo || 65,
+            reloadTime: options.reloadTime || 42,
+            name: 'Flamethrower',
+            ...options
+        });
+        this.particleLifetime = options.particleLifetime || 20;
+        this.burnDuration = options.burnDuration || 42;
+        this.burnDamagePerSecond = options.burnDamagePerSecond || 12;
+        this.particlesPerShot = options.particlesPerShot || 1;
+    }
+
+    fire(x, y, targetAngle, gameState, playerId) {
+        if (!this.canFire()) return false;
+
+        this.currentCooldown = this.fireCooldown;
+        this.angle = targetAngle;
+        this.ammo--;
+
+        if (this.ammo === 0) {
+            this.reload();
+        }
+
+        for (let i = 0; i < this.particlesPerShot; i++) {
+            const spreadAngle = this.angle + (Math.random() - 0.5) * this.spread;
+            const flame = new Bullet({
+                x,
+                y,
+                speed: this.bulletSpeed * (0.88 + Math.random() * 0.24),
+                angle: spreadAngle,
+                damage: this.damage,
+                radius: 5.4,
+                color: '#ffd84a',
+                playerId,
+                lifetime: this.particleLifetime,
+                kind: 'flame',
+                piercePlayers: true,
+                burnDuration: this.burnDuration,
+                burnDamagePerSecond: this.burnDamagePerSecond
+            });
+            gameState.bullets.push(flame);
+        }
+
+        return true;
+    }
+}
+
 module.exports = {
     Weapon,
     Shotgun,
@@ -604,5 +659,6 @@ module.exports = {
     LaserGun,
     Taser,
     RocketLauncher,
-    BubbleLauncher
+    BubbleLauncher,
+    Flamethrower
 }

@@ -46,6 +46,7 @@ class GameStateCache {
                 auraSlowed: player.auraSlowed || false,
                 kingAuraPulseTimer: Math.round((player.kingAuraPulseTimer || 0) * 100) / 100,
                 stunned: player.stunned || false,
+                isFiring: player.isFiring || false,
                 reaverStacks: player.reaverStacks || 0,
                 reaverBolts: (player.reaverBolts || []).map((bolt) => ({
                     targetX: Math.round((bolt.targetX || 0) * 100) / 100,
@@ -265,6 +266,7 @@ class GameStateCache {
                current.auraSlowed !== previous.auraSlowed ||
                current.kingAuraPulseTimer !== previous.kingAuraPulseTimer ||
                current.stunned !== previous.stunned ||
+               current.isFiring !== previous.isFiring ||
                current.reaverStacks !== previous.reaverStacks ||
                JSON.stringify(current.reaverBolts) !== JSON.stringify(previous.reaverBolts) ||
                JSON.stringify(current.laserBeam) !== JSON.stringify(previous.laserBeam) ||

@@ -83,14 +83,19 @@ const MODE_STATUS_REFRESH_MS = 5000;
 const CHAT_IDLE_FADE_MS = 7000;
 const CHAT_MAX_MESSAGES = 60;
 const MENU_AUDIO_UNLOCK_SELECTOR = '.menu-button, .equip-option, .equip-tab, .menu-link';
+const MENU_BUTTON_SOUND_SELECTOR = '.menu-button, .equip-option, .equip-tab, .menu-link';
+const MENU_HOVER_VOLUME = 0.18;
+const MENU_CLICK_VOLUME = 0.15;
 const MOVEMENT_KEY_CODES = [87, 83, 65, 68];
 const TEAM_COLORS = Object.freeze({
     red: 'rgba(255, 72, 72, 0.42)',
     blue: 'rgba(86, 158, 255, 0.42)'
 });
-const AMBIENCE_VOLUME = 0.3;
+const AMBIENCE_VOLUME = 0.2;
 const AMBIENCE_START_RETRY_MS = 220;
 const AMBIENCE_START_MAX_ATTEMPTS = 12;
+const LASER_LOOP_VOLUME = 0.2;
+const FLAME_LOOP_VOLUME = 0.24;
 
 const playerImages = {
     King: new Image(),
@@ -259,6 +264,16 @@ const WEAPON_LOADOUT_INFO = Object.freeze({
             { label: 'Fire Rate', value: '1.0 /s' },
             { label: 'Mag', value: '2' },
             { label: 'Reload', value: '1.95s' }
+        ]
+    },
+    flamethrower: {
+        title: 'Flamethrower',
+        subtitle: 'Weapon',
+        stats: [
+            { label: 'Damage', value: '1.2 + light burn' },
+            { label: 'Fire Rate', value: '25.0 /s' },
+            { label: 'Mag', value: '65' },
+            { label: 'Reload', value: '1.05s' }
         ]
     }
 });
@@ -531,7 +546,7 @@ const mobileControlState = {
 
 let playerSettings = loadCharacterSettings();
 const VALID_CHARACTERS = ['berserker', 'ninja', 'king', 'demoman', 'reaver'];
-const VALID_WEAPONS = ['m4', 'pistol', 'shotgun', 'sniper', 'laser', 'taser', 'rocket', 'bubble'];
+const VALID_WEAPONS = ['m4', 'pistol', 'shotgun', 'sniper', 'laser', 'taser', 'rocket', 'bubble', 'flamethrower'];
 const VALID_SHARED_ABILITIES = ['grenade', 'invisibility', 'shield', 'turret', 'healingcircle'];
 let loadoutDraft = sanitizePlayerSettings(playerSettings);
 playerSettings = { ...loadoutDraft };
@@ -546,6 +561,7 @@ setupDesktopLeaveButton();
 setupChatUi();
 setupModeStatusRefresh();
 setupMenuAudioUnlock();
+setupMenuButtonSounds();
 setupLoadoutTooltips();
 initializeAuth();
 
@@ -656,6 +672,30 @@ function setupMenuAudioUnlock() {
 
     document.addEventListener('pointerdown', tryUnlock, true);
     document.addEventListener('keydown', tryUnlock, true);
+}
+
+function setupMenuButtonSounds() {
+    if (!menu || !soundManager || typeof soundManager.play !== 'function') {
+        return;
+    }
+
+    const menuButtons = menu.querySelectorAll(MENU_BUTTON_SOUND_SELECTOR);
+    if (menuButtons.length === 0) {
+        return;
+    }
+
+    menuButtons.forEach((button) => {
+        button.addEventListener('pointerenter', (event) => {
+            if (event.pointerType === 'touch') {
+                return;
+            }
+            soundManager.play('hover', MENU_HOVER_VOLUME);
+        });
+
+        button.addEventListener('click', () => {
+            soundManager.play('click', MENU_CLICK_VOLUME);
+        });
+    });
 }
 
 function setupMobileControls() {
@@ -1712,6 +1752,7 @@ function showMainMenu() {
     resetChatForRoom();
     gameMode = '1v1';
     soundManager.stop('laser');
+    soundManager.stop('flame');
     clearAmbienceStartRetry();
     soundManager.stop('ambience');
     matchEndOverlay.classList.remove('show');
@@ -1762,7 +1803,7 @@ function showSearching() {
 }
 
 function getFallbackSecondary(primaryWeaponType) {
-    const fallbackOrder = ['pistol', 'm4', 'shotgun', 'sniper', 'laser', 'taser', 'rocket', 'bubble'];
+    const fallbackOrder = ['pistol', 'm4', 'shotgun', 'sniper', 'laser', 'taser', 'rocket', 'bubble', 'flamethrower'];
     return fallbackOrder.find((weapon) => weapon !== primaryWeaponType) || 'pistol';
 }
 
@@ -2978,6 +3019,7 @@ function draw(gameState) {
     const thisPlayer = gameState.players.find(player => player.id === socket.id) ?? gameState.players[0];
     if (!thisPlayer) {
         soundManager.stop('laser');
+        soundManager.stop('flame');
         return; // don't render if player not found
     }
     
@@ -3010,7 +3052,7 @@ function draw(gameState) {
         secondaryWeaponName.textContent = `Secondary: ${thisPlayer.secondaryWeapon.name}`;
     }
 
-    updateLaserLoopAudio(thisPlayer);
+    updateWeaponLoopAudio(thisPlayer);
 
     if (gameMode === '1v1') {
         killProgressContainer.style.display = 'block';
@@ -3706,14 +3748,23 @@ function drawReaverBolts(player) {
     }
 }
 
-function updateLaserLoopAudio(thisPlayer) {
+function updateWeaponLoopAudio(thisPlayer) {
     const usingLaser = thisPlayer.primaryWeapon?.name === 'Laser Gun';
     const beamActive = !!thisPlayer.laserBeam;
+    const usingFlamethrower = thisPlayer.primaryWeapon?.name === 'Flamethrower';
+    const canFlameFire = Number(thisPlayer.primaryWeapon?.ammo || 0) > 0 && !thisPlayer.primaryWeapon?.isReloading;
+    const flameActive = !!thisPlayer.isFiring && canFlameFire && !thisPlayer.stunned && !thisPlayer.isRespawning;
 
     if (usingLaser && beamActive && gameActive) {
-        soundManager.playLoop('laser', 0.2);
+        soundManager.playLoop('laser', LASER_LOOP_VOLUME);
     } else {
         soundManager.stop('laser');
+    }
+
+    if (usingFlamethrower && flameActive && gameActive) {
+        soundManager.playLoop('flame', FLAME_LOOP_VOLUME);
+    } else {
+        soundManager.stop('flame');
     }
 }
 
@@ -3760,6 +3811,19 @@ function drawBullet(bullet) {
             ctx.restore();
             return;
         }
+    }
+    if (bullet.kind === 'flame') {
+        const outerRadius = bullet.radius || 4;
+        const innerRadius = outerRadius * 0.55;
+        ctx.beginPath();
+        ctx.arc(bullet.x, bullet.y, outerRadius, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(255, 190, 30, 0.8)';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(bullet.x, bullet.y, innerRadius, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(255, 240, 120, 0.95)';
+        ctx.fill();
+        return;
     }
     ctx.beginPath();
     ctx.arc(bullet.x, bullet.y, bullet.radius, 0, 2 * Math.PI);
@@ -4051,7 +4115,10 @@ function handleGotHit() {
 
 function handleFiredWeapon() {
     const thisPlayer = gameState.players.find((player) => player.id === socket.id);
-    if (thisPlayer?.primaryWeapon?.name === 'Laser Gun') {
+    if (
+        thisPlayer?.primaryWeapon?.name === 'Laser Gun' ||
+        thisPlayer?.primaryWeapon?.name === 'Flamethrower'
+    ) {
         return;
     }
     if (thisPlayer?.primaryWeapon?.name === 'Rocket Launcher') {
@@ -4102,6 +4169,7 @@ function handleMatchEnded(data) {
 
     gameActive = false;
     soundManager.stop('laser');
+    soundManager.stop('flame');
     clearAmbienceStartRetry();
     soundManager.stop('ambience');
     matchEndTitle.textContent = data.youWon ? 'Victory' : 'Defeat';
@@ -4163,6 +4231,7 @@ function handleMatchClosed() {
         forfeitReturnTimeout = null;
     }
     soundManager.stop('laser');
+    soundManager.stop('flame');
     clearAmbienceStartRetry();
     soundManager.stop('ambience');
     showMainMenu();

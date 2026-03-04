@@ -7,7 +7,7 @@ const msgpack = require('msgpack-lite');
 const { Pool } = require('pg');
 const { createGameState, gameLoop, generateNewMap, TWO_VS_TWO_TEAM_LIVES } = require('./game');
 const { Berserker, Ninja, King, Demoman, Reaver } = require('./character');
-const { M4, Sniper, Pistol, Shotgun, LaserGun, Taser, RocketLauncher, BubbleLauncher } = require('./weapon');
+const { M4, Sniper, Pistol, Shotgun, LaserGun, Taser, RocketLauncher, BubbleLauncher, Flamethrower } = require('./weapon');
 const { Grenade, Invisibility, ShieldBarrier, TurretAbility, HealingCircle } = require('./specialAbilities');
 const { MAP_RADIUS, FRAME_RATE } = require('./constants');
 const { GameStateCache } = require('./gameStateCache');
@@ -160,7 +160,8 @@ const WEAPON_CLASSES = {
     laser: LaserGun,
     taser: Taser,
     rocket: RocketLauncher,
-    bubble: BubbleLauncher
+    bubble: BubbleLauncher,
+    flamethrower: Flamethrower
 };
 
 const SECONDARY_WEAPON_CLASSES = {
@@ -171,7 +172,8 @@ const SECONDARY_WEAPON_CLASSES = {
     laser: LaserGun,
     taser: Taser,
     rocket: RocketLauncher,
-    bubble: BubbleLauncher
+    bubble: BubbleLauncher,
+    flamethrower: Flamethrower
 };
 
 const VALID_CHARACTERS = Object.keys(CHARACTER_CLASSES);
@@ -1362,7 +1364,7 @@ function bootstrapWebSocketRoutes() {
 }
 
 function getFallbackSecondaryWeapon(primaryWeaponType) {
-    const fallbackOrder = [DEFAULT_SECONDARY_WEAPON, DEFAULT_PRIMARY_WEAPON, 'shotgun', 'sniper', 'laser', 'taser', 'rocket', 'bubble'];
+    const fallbackOrder = [DEFAULT_SECONDARY_WEAPON, DEFAULT_PRIMARY_WEAPON, 'shotgun', 'sniper', 'laser', 'taser', 'rocket', 'bubble', 'flamethrower'];
     return fallbackOrder.find((weapon) => weapon !== primaryWeaponType) || DEFAULT_SECONDARY_WEAPON;
 }
 

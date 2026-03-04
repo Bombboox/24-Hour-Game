@@ -68,6 +68,7 @@ class Character {
         this.reaverStackDecayTimer = 0;
         this.reaverSourceId = null;
         this.reaverDotEffects = [];
+        this.burnEffects = [];
         this.reaverBolts = [];
         this.team = options.team || null;
         this.isRespawning = false;
@@ -214,6 +215,7 @@ class Character {
         this.reaverStackDecayTimer = 0;
         this.reaverSourceId = null;
         this.reaverDotEffects = [];
+        this.burnEffects = [];
         this.reaverBolts = [];
         this.isRespawning = false;
         this.respawnTimer = 0;
@@ -306,6 +308,7 @@ class Character {
         this.reaverStackDecayTimer = 0;
         this.reaverSourceId = null;
         this.reaverDotEffects = [];
+        this.burnEffects = [];
         this.reaverBolts = [];
         this.isRespawning = false;
         this.respawnTimer = 0;

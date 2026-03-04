@@ -29,6 +29,10 @@ class Bullet {
         this.kind = options.kind || 'bullet';
         this.explosionRadius = options.explosionRadius || 0;
         this.explosionDamage = options.explosionDamage || this.damage;
+        this.piercePlayers = !!options.piercePlayers;
+        this.burnDuration = options.burnDuration || 0;
+        this.burnDamagePerSecond = options.burnDamagePerSecond || 0;
+        this.hitPlayers = new Set();
     }
     
     update(deltaTime, gameState, io = null) {
