@@ -130,6 +130,14 @@ class GameStateCache {
                 hiddenForEnemies: grenade.hiddenForEnemies || false,
                 isStationary: grenade.isStationary || false
             })),
+            pickups: (gameState.pickups || []).map((pickup) => ({
+                id: pickup.id,
+                type: pickup.type,
+                x: Math.round((pickup.x || 0) * 100) / 100,
+                y: Math.round((pickup.y || 0) * 100) / 100,
+                radius: pickup.radius || 0,
+                ttl: Math.round((pickup.ttl || 0) * 100) / 100
+            })),
             obstacles: gameState.obstacles.map(obstacle => ({
                 id: obstacle.id || `${obstacle.x}_${obstacle.y}_${obstacle.w}_${obstacle.h}`,
                 x: obstacle.x,
@@ -164,9 +172,11 @@ class GameStateCache {
             players: [],
             bullets: [],
             grenades: [],
+            pickups: [],
             obstacles: [],
             removedBullets: [],
             removedGrenades: [],
+            removedPickups: [],
             removedObstacles: []
         };
 
@@ -235,15 +245,33 @@ class GameStateCache {
             }
         }
 
+        const currentPickups = new Map((currentState.pickups || []).map((pickup) => [pickup.id, pickup]));
+        const previousPickups = new Map((previousState.pickups || []).map((pickup) => [pickup.id, pickup]));
+
+        for (const [id, currentPickup] of currentPickups) {
+            const previousPickup = previousPickups.get(id);
+            if (!previousPickup || this.hasPickupChanged(currentPickup, previousPickup)) {
+                delta.pickups.push(currentPickup);
+            }
+        }
+
+        for (const [id] of previousPickups) {
+            if (!currentPickups.has(id)) {
+                delta.removedPickups.push(id);
+            }
+        }
+
         const teamLivesChanged = JSON.stringify(currentState.teamLives) !== JSON.stringify(previousState.teamLives);
 
         const hasChanges = teamLivesChanged ||
                           delta.players.length > 0 || 
                           delta.bullets.length > 0 || 
                           delta.grenades.length > 0 ||
+                          delta.pickups.length > 0 ||
                           delta.obstacles.length > 0 ||
                           delta.removedBullets.length > 0 ||
                           delta.removedGrenades.length > 0 ||
+                          delta.removedPickups.length > 0 ||
                           delta.removedObstacles.length > 0;
 
         return hasChanges ? delta : null;
@@ -333,6 +361,14 @@ class GameStateCache {
                current.headImage !== previous.headImage ||
                current.ownerId !== previous.ownerId ||
                current.ownerTeam !== previous.ownerTeam;
+    }
+
+    hasPickupChanged(current, previous) {
+        return current.x !== previous.x ||
+               current.y !== previous.y ||
+               current.type !== previous.type ||
+               current.radius !== previous.radius ||
+               current.ttl !== previous.ttl;
     }
 
     updateAndGetDelta(gameState) {

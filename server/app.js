@@ -190,6 +190,15 @@ const VALID_SHARED_ABILITIES = Object.keys(SHARED_ABILITY_CLASSES);
 const DEFAULT_PRIMARY_WEAPON = 'm4';
 const DEFAULT_SECONDARY_WEAPON = 'pistol';
 const DEFAULT_SHARED_ABILITY = 'grenade';
+const SHOP_WEAPONS = Object.freeze({
+    bubble: {
+        price: 100
+    },
+    flamethrower: {
+        price: 250
+    }
+});
+const SHOP_WEAPON_CODES = Object.freeze(Object.keys(SHOP_WEAPONS));
 
 // 1v1 spawns
 const SPAWN_POSITIONS = {
@@ -447,6 +456,10 @@ async function initializeDatabase() {
             ALTER COLUMN display_name DROP NOT NULL
         `);
         await dbPool.query(`
+            ALTER TABLE accounts
+            ADD COLUMN IF NOT EXISTS owned_weapons TEXT[] NOT NULL DEFAULT '{}'
+        `);
+        await dbPool.query(`
             CREATE TABLE IF NOT EXISTS account_sessions (
                 id BIGSERIAL PRIMARY KEY,
                 account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -495,8 +508,33 @@ function sanitizeAccount(accountRow) {
         displayName: accountRow.display_name,
         avatarUrl: accountRow.avatar_url,
         bux: Number(accountRow.bux ?? DEFAULT_BUX),
-        elo: Number(accountRow.elo ?? DEFAULT_ELO)
+        elo: Number(accountRow.elo ?? DEFAULT_ELO),
+        ownedWeapons: normalizeOwnedWeapons(accountRow.owned_weapons)
     };
+}
+
+function normalizeOwnedWeapons(ownedWeapons) {
+    if (!Array.isArray(ownedWeapons)) {
+        return [];
+    }
+
+    return [...new Set(
+        ownedWeapons
+            .map((weaponType) => typeof weaponType === 'string' ? weaponType.trim().toLowerCase() : '')
+            .filter((weaponType) => SHOP_WEAPON_CODES.includes(weaponType))
+    )];
+}
+
+function isWeaponOwned(weaponType, ownedWeapons = []) {
+    if (!VALID_WEAPONS.includes(weaponType)) {
+        return false;
+    }
+
+    if (!SHOP_WEAPON_CODES.includes(weaponType)) {
+        return true;
+    }
+
+    return normalizeOwnedWeapons(ownedWeapons).includes(weaponType);
 }
 
 function normalizeDisplayName(value) {
@@ -570,7 +608,7 @@ async function upsertGoogleAccount(profile) {
                 email = EXCLUDED.email,
                 avatar_url = EXCLUDED.avatar_url,
                 updated_at = NOW()
-            RETURNING id, email, display_name, avatar_url, bux, elo
+            RETURNING id, email, display_name, avatar_url, bux, elo, owned_weapons
         `,
         [profile.sub, profile.email, null, profile.picture, DEFAULT_BUX, DEFAULT_ELO]
     );
@@ -603,7 +641,7 @@ async function getAccountBySessionToken(sessionToken) {
     const tokenHash = hashSessionToken(sessionToken);
     const rows = await dbPool.query(
         `
-            SELECT a.id, a.email, a.display_name, a.avatar_url, a.bux, a.elo
+            SELECT a.id, a.email, a.display_name, a.avatar_url, a.bux, a.elo, a.owned_weapons
             FROM account_sessions AS s
             INNER JOIN accounts AS a ON a.id = s.account_id
             WHERE s.token_hash = $1 AND s.expires_at > NOW()
@@ -639,7 +677,7 @@ async function updateAccountDisplayNameBySessionToken(sessionToken, displayName)
               AND s.expires_at > NOW()
               AND s.account_id = a.id
               AND a.display_name IS NULL
-            RETURNING a.id, a.email, a.display_name, a.avatar_url, a.bux, a.elo
+            RETURNING a.id, a.email, a.display_name, a.avatar_url, a.bux, a.elo, a.owned_weapons
         `,
         [displayName, tokenHash]
     );
@@ -652,8 +690,10 @@ function createGuestIdentity() {
         mode: 'guest',
         accountId: null,
         displayName: null,
+        bux: DEFAULT_BUX,
         elo: DEFAULT_ELO,
-        effectiveElo: DEFAULT_ELO
+        effectiveElo: DEFAULT_ELO,
+        ownedWeapons: []
     };
 }
 
@@ -687,9 +727,41 @@ async function updateAccountEloById(accountId, nextElo) {
             UPDATE accounts
             SET elo = $1, updated_at = NOW()
             WHERE id = $2
-            RETURNING id, email, display_name, avatar_url, bux, elo
+            RETURNING id, email, display_name, avatar_url, bux, elo, owned_weapons
         `,
         [normalizedElo, accountId]
+    );
+
+    return sanitizeAccount(result.rows[0]);
+}
+
+async function updateAccountBuxById(accountId, buxDelta) {
+    if (!dbPool || !accountId) {
+        return null;
+    }
+
+    const normalizedDelta = Math.max(0, Math.round(Number(buxDelta) || 0));
+    if (normalizedDelta <= 0) {
+        const result = await dbPool.query(
+            `
+                SELECT id, email, display_name, avatar_url, bux, elo, owned_weapons
+                FROM accounts
+                WHERE id = $1
+                LIMIT 1
+            `,
+            [accountId]
+        );
+        return sanitizeAccount(result.rows[0]);
+    }
+
+    const result = await dbPool.query(
+        `
+            UPDATE accounts
+            SET bux = bux + $1, updated_at = NOW()
+            WHERE id = $2
+            RETURNING id, email, display_name, avatar_url, bux, elo, owned_weapons
+        `,
+        [normalizedDelta, accountId]
     );
 
     return sanitizeAccount(result.rows[0]);
@@ -722,8 +794,10 @@ async function resolveSocketIdentity(socket) {
             mode: 'account',
             accountId: account.id,
             displayName: normalizeDisplayName(account.displayName || ''),
+            bux: Number(account.bux ?? DEFAULT_BUX),
             elo: Number(account.elo ?? DEFAULT_ELO),
-            effectiveElo: Number(account.elo ?? DEFAULT_ELO)
+            effectiveElo: Number(account.elo ?? DEFAULT_ELO),
+            ownedWeapons: normalizeOwnedWeapons(account.ownedWeapons)
         };
         socketIdentities.set(socket.id, socket.identity);
         return socket.identity;
@@ -736,6 +810,71 @@ async function resolveSocketIdentity(socket) {
         socket.identity = createGuestIdentity();
         socketIdentities.set(socket.id, socket.identity);
         return socket.identity;
+    }
+}
+
+async function purchaseAccountWeapon(accountId, weaponType) {
+    if (!dbPool || !accountId) {
+        throw new Error('Database unavailable');
+    }
+
+    const normalizedWeaponType = typeof weaponType === 'string' ? weaponType.trim().toLowerCase() : '';
+    const listing = SHOP_WEAPONS[normalizedWeaponType];
+    if (!listing) {
+        return { error: 'Weapon is not sold in the shop', status: '400 Bad Request' };
+    }
+
+    const client = await dbPool.connect();
+    try {
+        await client.query('BEGIN');
+        const result = await client.query(
+            `
+                SELECT id, email, display_name, avatar_url, bux, elo, owned_weapons
+                FROM accounts
+                WHERE id = $1
+                FOR UPDATE
+            `,
+            [accountId]
+        );
+
+        const account = result.rows[0];
+        if (!account) {
+            await client.query('ROLLBACK');
+            return { error: 'Authentication required', status: '401 Unauthorized' };
+        }
+
+        const ownedWeapons = normalizeOwnedWeapons(account.owned_weapons);
+        if (ownedWeapons.includes(normalizedWeaponType)) {
+            await client.query('ROLLBACK');
+            return { error: 'Weapon already purchased', status: '409 Conflict' };
+        }
+
+        const currentBux = Number(account.bux ?? DEFAULT_BUX);
+        if (currentBux < listing.price) {
+            await client.query('ROLLBACK');
+            return { error: 'Not enough bux', status: '409 Conflict' };
+        }
+
+        const nextOwnedWeapons = [...ownedWeapons, normalizedWeaponType];
+        const updateResult = await client.query(
+            `
+                UPDATE accounts
+                SET bux = bux - $1,
+                    owned_weapons = $2::text[],
+                    updated_at = NOW()
+                WHERE id = $3
+                RETURNING id, email, display_name, avatar_url, bux, elo, owned_weapons
+            `,
+            [listing.price, nextOwnedWeapons, accountId]
+        );
+
+        await client.query('COMMIT');
+        return { account: sanitizeAccount(updateResult.rows[0]) };
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
     }
 }
 
@@ -1358,27 +1497,85 @@ function bootstrapWebSocketRoutes() {
         }
     });
 
+    wsApp.post('/api/shop/purchase-weapon', async (res, req) => {
+        const responseState = getResponseState(res);
+
+        try {
+            if (!dbPool) {
+                createJsonResponse(res, '503 Service Unavailable', { error: 'Shop unavailable' });
+                return;
+            }
+
+            const cookies = parseCookieHeader(req.getHeader('cookie'));
+            const sessionToken = cookies[SESSION_COOKIE_NAME];
+            if (!sessionToken) {
+                createJsonResponse(res, '401 Unauthorized', { error: 'Authentication required' });
+                return;
+            }
+
+            const bodyPromise = readJsonBody(res);
+            const currentAccount = await getAccountBySessionToken(sessionToken);
+            if (responseState.aborted) {
+                return;
+            }
+
+            if (!currentAccount) {
+                createJsonResponse(res, '401 Unauthorized', { error: 'Authentication required' });
+                return;
+            }
+
+            const body = await bodyPromise;
+            if (responseState.aborted) {
+                return;
+            }
+
+            const purchaseResult = await purchaseAccountWeapon(currentAccount.id, body?.weaponType);
+            if (responseState.aborted) {
+                return;
+            }
+
+            if (purchaseResult?.error) {
+                createJsonResponse(res, purchaseResult.status || '400 Bad Request', { error: purchaseResult.error });
+                return;
+            }
+
+            createJsonResponse(res, '200 OK', {
+                success: true,
+                account: purchaseResult.account
+            });
+        } catch (error) {
+            if (responseState.aborted) {
+                return;
+            }
+            logger.warn('Weapon purchase failed', { error: error.message });
+            createJsonResponse(res, '500 Internal Server Error', { error: 'Failed to purchase weapon' });
+        }
+    });
+
     wsApp.get('/*', (res, req) => {
         serveClientFile(res, req.getUrl());
     });
 }
 
-function getFallbackSecondaryWeapon(primaryWeaponType) {
+function getFallbackSecondaryWeapon(primaryWeaponType, ownedWeapons = []) {
     const fallbackOrder = [DEFAULT_SECONDARY_WEAPON, DEFAULT_PRIMARY_WEAPON, 'shotgun', 'sniper', 'laser', 'taser', 'rocket', 'bubble', 'flamethrower'];
-    return fallbackOrder.find((weapon) => weapon !== primaryWeaponType) || DEFAULT_SECONDARY_WEAPON;
+    return fallbackOrder.find((weapon) => weapon !== primaryWeaponType && isWeaponOwned(weapon, ownedWeapons)) || DEFAULT_SECONDARY_WEAPON;
 }
 
-function normalizeLoadout(weaponType, secondaryWeaponType) {
+function normalizeLoadout(weaponType, secondaryWeaponType, ownedWeapons = []) {
     const primaryType = weaponType?.toLowerCase();
     const secondaryType = secondaryWeaponType?.toLowerCase();
 
-    const normalizedPrimary = VALID_WEAPONS.includes(primaryType) ? primaryType : DEFAULT_PRIMARY_WEAPON;
+    const normalizedPrimary = (VALID_WEAPONS.includes(primaryType) && isWeaponOwned(primaryType, ownedWeapons))
+        ? primaryType
+        : DEFAULT_PRIMARY_WEAPON;
     let normalizedSecondary = VALID_SECONDARY_WEAPONS.includes(secondaryType)
+        && isWeaponOwned(secondaryType, ownedWeapons)
         ? secondaryType
-        : getFallbackSecondaryWeapon(normalizedPrimary);
+        : getFallbackSecondaryWeapon(normalizedPrimary, ownedWeapons);
 
     if (normalizedSecondary === normalizedPrimary) {
-        normalizedSecondary = getFallbackSecondaryWeapon(normalizedPrimary);
+        normalizedSecondary = getFallbackSecondaryWeapon(normalizedPrimary, ownedWeapons);
     }
 
     return {
@@ -1392,9 +1589,9 @@ function normalizeSharedAbility(sharedAbilityType) {
     return VALID_SHARED_ABILITIES.includes(sharedType) ? sharedType : DEFAULT_SHARED_ABILITY;
 }
 
-function createPlayer(characterType, weaponType, secondaryWeaponType, sharedAbilityType, playerNumber, id, spawnX = null, spawnY = null) {
+function createPlayer(characterType, weaponType, secondaryWeaponType, sharedAbilityType, playerNumber, id, spawnX = null, spawnY = null, ownedWeapons = []) {
     const charType = characterType?.toLowerCase();
-    const normalizedLoadout = normalizeLoadout(weaponType, secondaryWeaponType);
+    const normalizedLoadout = normalizeLoadout(weaponType, secondaryWeaponType, ownedWeapons);
     const normalizedSharedAbility = normalizeSharedAbility(sharedAbilityType);
 
     const CharacterClass = CHARACTER_CLASSES[charType] || Berserker;
@@ -1609,6 +1806,75 @@ function broadcastFullGameState(gameCode) {
     }
 }
 
+function calculateMatchBuxReward(player, didWin) {
+    const coins = Math.max(0, Math.round(Number(player?.coinsCollected || 0)));
+    const kills = Math.max(0, Math.round(Number(player?.kills || 0)));
+    const victoryBonus = didWin ? 5 : 0;
+    return coins + kills + victoryBonus;
+}
+
+async function applyMatchBuxReward(identity, socketId, buxEarned) {
+    const normalizedEarned = Math.max(0, Math.round(Number(buxEarned) || 0));
+    if (identity?.mode !== 'account' || !identity.accountId) {
+        return {
+            applied: 0,
+            newBux: Number(identity?.bux ?? DEFAULT_BUX)
+        };
+    }
+
+    try {
+        const updatedAccount = await updateAccountBuxById(identity.accountId, normalizedEarned);
+        const resultingBux = Number(updatedAccount?.bux ?? (Number(identity.bux ?? DEFAULT_BUX) + normalizedEarned));
+        if (socketId && socketIdentities.has(socketId)) {
+            const updatedIdentity = {
+                ...socketIdentities.get(socketId),
+                bux: resultingBux
+            };
+            socketIdentities.set(socketId, updatedIdentity);
+            const socketInfo = socketState.get(socketId);
+            if (socketInfo?.socket) {
+                socketInfo.socket.identityResolved = true;
+                socketInfo.socket.identity = updatedIdentity;
+            }
+        }
+        return {
+            applied: normalizedEarned,
+            newBux: resultingBux
+        };
+    } catch (error) {
+        logger.warn('Failed to update bux rewards', { error: error.message, socketId });
+        return {
+            applied: 0,
+            newBux: Number(identity?.bux ?? DEFAULT_BUX)
+        };
+    }
+}
+
+async function emitFreeForAllDepartureResult(socket, player) {
+    const kills = Math.max(0, Math.round(Number(player?.kills || 0)));
+    const coinsCollected = Math.max(0, Math.round(Number(player?.coinsCollected || 0)));
+    if (kills < 1 && coinsCollected < 1) {
+        return false;
+    }
+
+    const identity = await resolveSocketIdentity(socket);
+    const buxEarned = calculateMatchBuxReward(player, false);
+    const buxResult = await applyMatchBuxReward(identity, socket.id, buxEarned);
+
+    socket.emit('matchEnded', {
+        gameMode: 'freeForAll',
+        reason: 'leave',
+        yourKills: kills,
+        opponentKills: 0,
+        coinsCollected,
+        buxEarned,
+        buxDelta: buxResult.applied,
+        newBux: buxResult.newBux
+    });
+
+    return true;
+}
+
 async function finalizeOneVsOneMatch(gameCode, options = {}) {
     const gameState = state.get(gameCode);
     if (!gameState || gameState.gameMode !== '1v1' || gameState.matchResultEmitted) {
@@ -1618,17 +1884,20 @@ async function finalizeOneVsOneMatch(gameCode, options = {}) {
     const participants = gameState.players.slice(0, 2);
     if (participants.length < 2) {
         gameState.matchResultEmitted = true;
+        gameState.matchResultProcessing = false;
         return;
     }
 
     const winnerId = options.winnerId || gameState.matchWinnerId;
     if (!winnerId) {
+        gameState.matchResultProcessing = false;
         return;
     }
 
     const loser = participants.find((player) => player.id !== winnerId);
     const winner = participants.find((player) => player.id === winnerId);
     if (!winner || !loser) {
+        gameState.matchResultProcessing = false;
         return;
     }
 
@@ -1666,6 +1935,7 @@ async function finalizeOneVsOneMatch(gameCode, options = {}) {
         if (winnerAccountUpdate && socketIdentities.has(winner.id)) {
             const updatedIdentity = {
                 ...socketIdentities.get(winner.id),
+                bux: Number(winnerAccountUpdate.bux ?? socketIdentities.get(winner.id)?.bux ?? DEFAULT_BUX),
                 elo: Number(winnerAccountUpdate.elo ?? winnerEloAfter),
                 effectiveElo: Number(winnerAccountUpdate.elo ?? winnerEloAfter)
             };
@@ -1679,6 +1949,7 @@ async function finalizeOneVsOneMatch(gameCode, options = {}) {
         if (loserAccountUpdate && socketIdentities.has(loser.id)) {
             const updatedIdentity = {
                 ...socketIdentities.get(loser.id),
+                bux: Number(loserAccountUpdate.bux ?? socketIdentities.get(loser.id)?.bux ?? DEFAULT_BUX),
                 elo: Number(loserAccountUpdate.elo ?? loserEloAfter),
                 effectiveElo: Number(loserAccountUpdate.elo ?? loserEloAfter)
             };
@@ -1693,6 +1964,13 @@ async function finalizeOneVsOneMatch(gameCode, options = {}) {
         logger.warn('Failed to update Elo ratings', { error: error.message, gameCode });
     }
 
+    const winnerBuxEarned = calculateMatchBuxReward(winner, true);
+    const loserBuxEarned = calculateMatchBuxReward(loser, false);
+    const [winnerBuxResult, loserBuxResult] = await Promise.all([
+        applyMatchBuxReward(winnerIdentity, winner.id, winnerBuxEarned),
+        applyMatchBuxReward(loserIdentity, loser.id, loserBuxEarned)
+    ]);
+
     const targetKills = gameState.matchTargetKills || ONE_VS_ONE_KILL_TARGET;
     const reason = options.reason || gameState.matchEndReason || 'elimination';
     for (const participant of participants) {
@@ -1701,11 +1979,19 @@ async function finalizeOneVsOneMatch(gameCode, options = {}) {
         const yourDelta = isWinner ? winnerDeltaApplied : loserDeltaApplied;
         const yourEloAfter = isWinner ? winnerEloAfter : loserEloAfter;
         const opponentEloBefore = isWinner ? loserEloBefore : winnerEloBefore;
+        const yourBuxEarned = isWinner ? winnerBuxEarned : loserBuxEarned;
+        const yourBuxApplied = isWinner ? winnerBuxResult.applied : loserBuxResult.applied;
+        const yourNewBux = isWinner ? winnerBuxResult.newBux : loserBuxResult.newBux;
+        const yourCoinsCollected = Math.max(0, Math.round(Number(participant.coinsCollected || 0)));
         io.to(participant.id).emit('matchEnded', {
             winnerId: winner.id,
             youWon: isWinner,
             yourKills: participant.kills,
             opponentKills: participants.find((p) => p.id !== participant.id)?.kills ?? 0,
+            coinsCollected: yourCoinsCollected,
+            buxEarned: yourBuxEarned,
+            buxDelta: yourBuxApplied,
+            newBux: yourNewBux,
             targetKills,
             reason,
             rated: yourIdentity.mode === 'account',
@@ -1716,6 +2002,66 @@ async function finalizeOneVsOneMatch(gameCode, options = {}) {
     }
 
     gameState.matchResultEmitted = true;
+    gameState.matchResultProcessing = false;
+}
+
+async function finalizeTwoVsTwoMatch(gameCode, options = {}) {
+    const gameState = state.get(gameCode);
+    if (!gameState || gameState.gameMode !== '2v2' || gameState.matchResultEmitted) {
+        return;
+    }
+
+    const teamLives = gameState.teamLives || { red: 0, blue: 0 };
+    const winnerTeam = options.winnerTeam === 'red'
+        ? 'red'
+        : (options.winnerTeam === 'blue'
+            ? 'blue'
+            : (gameState.matchWinnerTeam === 'red'
+                ? 'red'
+                : (gameState.matchWinnerTeam === 'blue'
+                    ? 'blue'
+                    : (Number(teamLives.red || 0) > Number(teamLives.blue || 0) ? 'red' : 'blue'))));
+    const reason = options.reason || gameState.matchEndReason || 'elimination';
+    const participants = Array.isArray(gameState.players) ? gameState.players : [];
+    const ratingSnapshots = gameState.playerRatings || {};
+
+    const rewardResults = new Map();
+    const rewardTasks = participants.map(async (participant) => {
+        const identity = ratingSnapshots[participant.id] || socketIdentities.get(participant.id) || createGuestIdentity();
+        const didWin = participant.team === winnerTeam;
+        const buxEarned = calculateMatchBuxReward(participant, didWin);
+        const buxResult = await applyMatchBuxReward(identity, participant.id, buxEarned);
+        rewardResults.set(participant.id, {
+            buxEarned,
+            buxApplied: buxResult.applied,
+            newBux: buxResult.newBux
+        });
+    });
+    await Promise.all(rewardTasks);
+
+    for (const participant of participants) {
+        const rewards = rewardResults.get(participant.id) || { buxEarned: 0, buxApplied: 0, newBux: DEFAULT_BUX };
+        io.to(participant.id).emit('matchEnded', {
+            youWon: participant.team === winnerTeam,
+            yourKills: participant.kills || 0,
+            opponentKills: 0,
+            targetKills: 0,
+            reason,
+            rated: false,
+            eloDelta: 0,
+            newElo: DEFAULT_ELO,
+            opponentElo: DEFAULT_ELO,
+            winnerTeam,
+            teamLives,
+            coinsCollected: Math.max(0, Math.round(Number(participant.coinsCollected || 0))),
+            buxEarned: rewards.buxEarned,
+            buxDelta: rewards.buxApplied,
+            newBux: rewards.newBux
+        });
+    }
+
+    gameState.matchResultEmitted = true;
+    gameState.matchResultProcessing = false;
 }
 
 io.on('connection', (socket) => {
@@ -1775,7 +2121,7 @@ io.on('connection', (socket) => {
                 socket.join(roomName);
                 socket.number = 2;
                 
-                const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, data?.sharedAbilityType, 2, socket.id);
+                const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, data?.sharedAbilityType, 2, socket.id, null, null, identity.ownedWeapons);
                 const roomState = state.get(roomName);
                 roomState.players.push(player);
                 roomState.playerRatings = roomState.playerRatings || {};
@@ -1813,7 +2159,7 @@ io.on('connection', (socket) => {
                 state.get(roomName).waitingPlayerElo = identity.effectiveElo;
                 gameStateCaches.set(roomName, new GameStateCache());
                 
-                const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, data?.sharedAbilityType, 1, socket.id);
+                const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, data?.sharedAbilityType, 1, socket.id, null, null, identity.ownedWeapons);
                 state.get(roomName).players.push(player);
 
                 socket.join(roomName);
@@ -1866,7 +2212,7 @@ io.on('connection', (socket) => {
             socket.number = getRandomPlayerNumber();
 
             const spawnPos = getRandomSpawnPosition();
-            const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, data?.sharedAbilityType, socket.number, socket.id, spawnPos.x, spawnPos.y);
+            const player = createPlayer(data?.characterType, data?.weaponType, data?.secondaryWeaponType, data?.sharedAbilityType, socket.number, socket.id, spawnPos.x, spawnPos.y, identity.ownedWeapons);
             player.randomSpawn(state.get(FREE_FOR_ALL_ROOM));
             state.get(FREE_FOR_ALL_ROOM).players.push(player);
 
@@ -1943,7 +2289,8 @@ io.on('connection', (socket) => {
                 socket.number,
                 socket.id,
                 spawn.x,
-                spawn.y
+                spawn.y,
+                identity.ownedWeapons
             );
             player.team = team;
             player.isRespawning = false;
@@ -2070,9 +2417,13 @@ io.on('connection', (socket) => {
         }
 
         if (roomName === FREE_FOR_ALL_ROOM) {
+            const roomState = state.get(roomName);
+            const player = roomState?.players?.find((candidate) => candidate.id === socket.id) || null;
+            if (player) {
+                await emitFreeForAllDepartureResult(socket, player);
+            }
             cleanupSocketResources(socket.id);
             cleanupPlayerFromRoom(socket.id);
-            const roomState = state.get(roomName);
             if (roomState) {
                 io.sockets.in(roomName).emit('playerLeft', {
                     playerCount: roomState.players.length,
@@ -2123,23 +2474,10 @@ io.on('connection', (socket) => {
             roomState.matchEnded = true;
             roomState.matchWinnerTeam = winnerTeam;
             roomState.matchEndReason = 'forfeit';
-            roomState.matchResultEmitted = true;
-
-            for (const participant of roomState.players) {
-                io.to(participant.id).emit('matchEnded', {
-                    youWon: participant.team === winnerTeam,
-                    yourKills: participant.kills || 0,
-                    opponentKills: 0,
-                    targetKills: 0,
-                    reason: 'forfeit',
-                    rated: false,
-                    eloDelta: 0,
-                    newElo: DEFAULT_ELO,
-                    opponentElo: DEFAULT_ELO,
-                    winnerTeam,
-                    teamLives: roomState.teamLives || { red: 0, blue: 0 }
-                });
-            }
+            await finalizeTwoVsTwoMatch(roomName, {
+                winnerTeam,
+                reason: 'forfeit'
+            });
         } else if (roomState) {
             io.sockets.in(roomName).emit('opponentLeft');
         }
@@ -2251,36 +2589,24 @@ function startGameInterval(gameCode) {
                 reason: gameState.matchEndReason || 'elimination'
             }).catch((error) => {
                 logger.error('Error finalizing 1v1 match', error);
+                gameState.matchResultProcessing = false;
             });
         }
 
         if (
             gameState.gameMode === '2v2' &&
             gameState.matchEnded &&
-            !gameState.matchResultEmitted
+            !gameState.matchResultEmitted &&
+            !gameState.matchResultProcessing
         ) {
-            const teamLives = gameState.teamLives || { red: 0, blue: 0 };
-            const winnerTeam = gameState.matchWinnerTeam === 'red'
-                ? 'red'
-                : (gameState.matchWinnerTeam === 'blue'
-                    ? 'blue'
-                    : (Number(teamLives.red || 0) > Number(teamLives.blue || 0) ? 'red' : 'blue'));
-            for (const participant of gameState.players) {
-                io.to(participant.id).emit('matchEnded', {
-                    youWon: participant.team === winnerTeam,
-                    yourKills: participant.kills || 0,
-                    opponentKills: 0,
-                    targetKills: 0,
-                    reason: gameState.matchEndReason || 'elimination',
-                    rated: false,
-                    eloDelta: 0,
-                    newElo: DEFAULT_ELO,
-                    opponentElo: DEFAULT_ELO,
-                    winnerTeam,
-                    teamLives
-                });
-            }
-            gameState.matchResultEmitted = true;
+            gameState.matchResultProcessing = true;
+            finalizeTwoVsTwoMatch(gameCode, {
+                winnerTeam: gameState.matchWinnerTeam,
+                reason: gameState.matchEndReason || 'elimination'
+            }).catch((error) => {
+                logger.error('Error finalizing 2v2 match', error);
+                gameState.matchResultProcessing = false;
+            });
         }
 
         if (

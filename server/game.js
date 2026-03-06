@@ -2,14 +2,28 @@ const { Character, Ninja, King, Berserker } = require('./character');
 const { Bullet } = require('./bullet');
 const { Obstacle } = require('./obstacle');
 const { MAP_RADIUS } = require('./constants');
+const { circleObstacleCollision } = require('./collision');
 const ONE_VS_ONE_KILL_TARGET = 5;
 const TWO_VS_TWO_TEAM_LIVES = 10;
 const TWO_VS_TWO_RESPAWN_DELAY = 75; // 3 seconds (delta units)
 const TWO_VS_TWO_INVULNERABLE_DURATION = 75; // 3 seconds (delta units)
+const ONE_VS_ONE_RESPAWN_DELAY = 75; // 3 seconds
+const ONE_VS_ONE_INVULNERABLE_DURATION = 75; // 3 seconds
 const FORCE_STUN_THRESHOLD = 0.15;
 const FORCE_STUN_DURATION = 12.5;
 const REAVER_STACK_TIMEOUT = 200;
 const REAVER_DOT_DURATION = 125;
+const PICKUP_HEAL_RADIUS = 18;
+const PICKUP_COIN_RADIUS = 14;
+const PICKUP_HEAL_MAX_ACTIVE = 4;
+const PICKUP_COIN_MAX_ACTIVE = 12;
+const PICKUP_HEAL_SPAWN_MIN = 160;
+const PICKUP_HEAL_SPAWN_MAX = 280;
+const PICKUP_COIN_SPAWN_MIN = 55;
+const PICKUP_COIN_SPAWN_MAX = 120;
+const PICKUP_DESPAWN_TIME = 900; // 36 seconds
+const PICKUP_HEAL_RATIO_TOTAL = 0.3;
+const PICKUP_HEAL_DURATION = 125; // 5 seconds
 
 function createGameState() {
     return {
@@ -17,6 +31,10 @@ function createGameState() {
         bullets: [],
         grenades: [],
         obstacles: [],
+        pickups: [],
+        nextPickupId: 1,
+        healPickupSpawnTimer: randomRange(PICKUP_HEAL_SPAWN_MIN, PICKUP_HEAL_SPAWN_MAX),
+        coinPickupSpawnTimer: randomRange(PICKUP_COIN_SPAWN_MIN, PICKUP_COIN_SPAWN_MAX),
         gameMode: '1v1',
         teamLives: null
     }
@@ -62,6 +80,195 @@ function respawnTwoVsTwoPlayer(player, gameState) {
     gameState.cacheReset = true;
 }
 
+function startOneVsOneRespawn(player) {
+    player.isRespawning = true;
+    player.respawnTimer = ONE_VS_ONE_RESPAWN_DELAY;
+    player.invulnerableTimer = 0;
+    player.invisible = false;
+    player.opacity = 0;
+    player.isFiring = false;
+    player.lastDamagedBy = null;
+}
+
+function respawnOneVsOnePlayer(player, gameState) {
+    player.respawn();
+    player.isRespawning = false;
+    player.respawnTimer = 0;
+    player.invulnerableTimer = ONE_VS_ONE_INVULNERABLE_DURATION;
+    player.opacity = 1;
+    gameState.cacheReset = true;
+}
+
+function randomRange(minValue, maxValue) {
+    return minValue + Math.random() * Math.max(0, maxValue - minValue);
+}
+
+function createPickup(gameState, type, x, y, radius) {
+    const id = `pickup_${gameState.nextPickupId++}`;
+    return {
+        id,
+        type,
+        x,
+        y,
+        radius,
+        ttl: PICKUP_DESPAWN_TIME
+    };
+}
+
+function isPickupPositionValid(gameState, x, y, radius) {
+    const distanceFromCenter = Math.sqrt(x * x + y * y);
+    if (distanceFromCenter > MAP_RADIUS - radius - 8) {
+        return false;
+    }
+
+    for (const obstacle of gameState.obstacles || []) {
+        if (circleObstacleCollision(x, y, radius, obstacle)) {
+            return false;
+        }
+    }
+
+    for (const player of gameState.players || []) {
+        if (player.isRespawning) {
+            continue;
+        }
+        const dx = x - player.x;
+        const dy = y - player.y;
+        const minDist = radius + (player.radius || 20) + 20;
+        if (dx * dx + dy * dy < minDist * minDist) {
+            return false;
+        }
+    }
+
+    for (const existing of gameState.pickups || []) {
+        const dx = x - existing.x;
+        const dy = y - existing.y;
+        const minDist = radius + (existing.radius || 0) + 20;
+        if (dx * dx + dy * dy < minDist * minDist) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function trySpawnPickup(gameState, type) {
+    const radius = type === 'heal' ? PICKUP_HEAL_RADIUS : PICKUP_COIN_RADIUS;
+    for (let attempt = 0; attempt < 60; attempt++) {
+        const angle = Math.random() * Math.PI * 2;
+        const distance = Math.sqrt(Math.random()) * (MAP_RADIUS - radius - 12);
+        const x = Math.cos(angle) * distance;
+        const y = Math.sin(angle) * distance;
+        if (!isPickupPositionValid(gameState, x, y, radius)) {
+            continue;
+        }
+        gameState.pickups.push(createPickup(gameState, type, x, y, radius));
+        gameState.cacheReset = true;
+        return true;
+    }
+    return false;
+}
+
+function updatePickupSpawns(gameState, deltaTime) {
+    if (!Array.isArray(gameState.pickups)) {
+        gameState.pickups = [];
+    }
+
+    let pickupRemoved = false;
+    for (let i = gameState.pickups.length - 1; i >= 0; i--) {
+        const pickup = gameState.pickups[i];
+        pickup.ttl = Math.max(0, (pickup.ttl || PICKUP_DESPAWN_TIME) - deltaTime);
+        if (pickup.ttl <= 0) {
+            gameState.pickups.splice(i, 1);
+            pickupRemoved = true;
+        }
+    }
+    if (pickupRemoved) {
+        gameState.cacheReset = true;
+    }
+
+    gameState.healPickupSpawnTimer = Math.max(0, (gameState.healPickupSpawnTimer || 0) - deltaTime);
+    gameState.coinPickupSpawnTimer = Math.max(0, (gameState.coinPickupSpawnTimer || 0) - deltaTime);
+
+    const healCount = gameState.pickups.filter((pickup) => pickup.type === 'heal').length;
+    const coinCount = gameState.pickups.filter((pickup) => pickup.type === 'coin').length;
+
+    if (healCount < PICKUP_HEAL_MAX_ACTIVE && gameState.healPickupSpawnTimer <= 0) {
+        trySpawnPickup(gameState, 'heal');
+        gameState.healPickupSpawnTimer = randomRange(PICKUP_HEAL_SPAWN_MIN, PICKUP_HEAL_SPAWN_MAX);
+    }
+
+    if (coinCount < PICKUP_COIN_MAX_ACTIVE && gameState.coinPickupSpawnTimer <= 0) {
+        trySpawnPickup(gameState, 'coin');
+        gameState.coinPickupSpawnTimer = randomRange(PICKUP_COIN_SPAWN_MIN, PICKUP_COIN_SPAWN_MAX);
+    }
+}
+
+function applyActiveHealOverTime(player, deltaTime) {
+    if (!Array.isArray(player.pickupHealOverTimeEffects) || player.pickupHealOverTimeEffects.length === 0) {
+        return;
+    }
+
+    const nextEffects = [];
+    for (const effect of player.pickupHealOverTimeEffects) {
+        const remaining = Math.max(0, (effect.remaining || 0) - deltaTime);
+        const step = Math.max(0, Number(effect.healPerDeltaUnit) || 0) * deltaTime;
+        if (step > 0 && player.HP < player.maxHP) {
+            const missing = Math.max(0, player.maxHP - player.HP);
+            const actualHeal = Math.min(missing, step);
+            player.HP += actualHeal;
+        }
+        if (remaining > 0) {
+            nextEffects.push({
+                ...effect,
+                remaining
+            });
+        }
+    }
+    player.pickupHealOverTimeEffects = nextEffects;
+}
+
+function collectPlayerPickups(player, gameState, io) {
+    if (!Array.isArray(gameState.pickups) || gameState.pickups.length === 0) {
+        return;
+    }
+
+    let pickedAny = false;
+    for (let i = gameState.pickups.length - 1; i >= 0; i--) {
+        const pickup = gameState.pickups[i];
+        const dx = player.x - pickup.x;
+        const dy = player.y - pickup.y;
+        const range = (player.radius || 20) + (pickup.radius || 0);
+        if (dx * dx + dy * dy > range * range) {
+            continue;
+        }
+
+        if (pickup.type === 'heal') {
+            const totalHeal = Math.max(1, player.maxHP * PICKUP_HEAL_RATIO_TOTAL);
+            const healPerDeltaUnit = totalHeal / PICKUP_HEAL_DURATION;
+            player.pickupHealOverTimeEffects = player.pickupHealOverTimeEffects || [];
+            player.pickupHealOverTimeEffects.push({
+                remaining: PICKUP_HEAL_DURATION,
+                healPerDeltaUnit
+            });
+            if (io && player.id) {
+                io.to(player.id).emit('pickupCollected', { type: 'heal' });
+            }
+        } else if (pickup.type === 'coin') {
+            player.coinsCollected = Number(player.coinsCollected || 0) + 1;
+            if (io && player.id) {
+                io.to(player.id).emit('pickupCollected', { type: 'coin' });
+            }
+        }
+
+        gameState.pickups.splice(i, 1);
+        pickedAny = true;
+    }
+
+    if (pickedAny) {
+        gameState.cacheReset = true;
+    }
+}
+
 function gameLoop(gameState, deltaTime, io) {
     gameState.io = io;
     if (gameState.matchEnded) {
@@ -72,7 +279,7 @@ function gameLoop(gameState, deltaTime, io) {
         ensureTwoVsTwoState(gameState);
     }
 
-    let shouldRespawnAll = false;
+    updatePickupSpawns(gameState, deltaTime);
 
     for (const player of gameState.players) {
         if ((player.stunnedTimer || 0) > 0) {
@@ -115,11 +322,17 @@ function gameLoop(gameState, deltaTime, io) {
             player.respawnTimer = Math.max(0, (player.respawnTimer || 0) - deltaTime);
             player.isFiring = false;
             player.opacity = 0;
-            if (player.respawnTimer <= 0 && gameState.gameMode === '2v2' && !gameState.matchEnded) {
-                respawnTwoVsTwoPlayer(player, gameState);
+            if (player.respawnTimer <= 0 && !gameState.matchEnded) {
+                if (gameState.gameMode === '2v2') {
+                    respawnTwoVsTwoPlayer(player, gameState);
+                } else if (gameState.gameMode === '1v1') {
+                    respawnOneVsOnePlayer(player, gameState);
+                }
             }
             continue;
         }
+
+        applyActiveHealOverTime(player, deltaTime);
         if (player.burnEffects?.length) {
             const nextBurnEffects = [];
             for (const effect of player.burnEffects) {
@@ -359,6 +572,7 @@ function gameLoop(gameState, deltaTime, io) {
         if(player.sharedAbility) player.sharedAbility.update(deltaTime, player, gameState);
         if(player.passiveAbility) player.passiveAbility.update(deltaTime, player, gameState);
         if(player.swapCooldownTimer > 0) player.swapCooldownTimer -= deltaTime;
+        collectPlayerPickups(player, gameState, io);
     
         for (const bullet of gameState.bullets) {
             if (!bullet?.active) continue;
@@ -545,16 +759,14 @@ function gameLoop(gameState, deltaTime, io) {
                 player.lastDamagedBy = null;
             } else {
                 if (!gameState.matchEnded) {
-                    shouldRespawnAll = true;
+                    if (gameState.gameMode === '1v1') {
+                        startOneVsOneRespawn(player);
+                        player.lastDamagedBy = null;
+                        gameState.cacheReset = true;
+                        continue;
+                    }
                 }
             }
-        }
-    }
-
-    if (shouldRespawnAll) {
-        respawnAll(gameState);
-        for (const player of gameState.players) {
-            player.lastDamagedBy = null;
         }
     }
     

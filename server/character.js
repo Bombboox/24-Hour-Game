@@ -74,6 +74,8 @@ class Character {
         this.isRespawning = false;
         this.respawnTimer = 0;
         this.invulnerableTimer = 0;
+        this.coinsCollected = 0;
+        this.pickupHealOverTimeEffects = [];
     }
     
     takeDamage(damage, sourceId = null) {
@@ -220,6 +222,7 @@ class Character {
         this.isRespawning = false;
         this.respawnTimer = 0;
         this.invulnerableTimer = 0;
+        this.pickupHealOverTimeEffects = [];
         this.sharedAbilityKeyHeld = false;
         this.passiveAbilityKeyHeld = false;
         this.specialAbilityKeyHeld = false;
@@ -313,6 +316,7 @@ class Character {
         this.isRespawning = false;
         this.respawnTimer = 0;
         this.invulnerableTimer = 0;
+        this.pickupHealOverTimeEffects = [];
         this.sharedAbilityKeyHeld = false;
         this.passiveAbilityKeyHeld = false;
         this.specialAbilityKeyHeld = false;

@@ -9,6 +9,7 @@ const menu = document.getElementById("menu");
 const mainMenuContent = document.getElementById("mainMenuContent");
 const playMenuContent = document.getElementById("playMenuContent");
 const characterMenu = document.getElementById("characterMenu");
+const shopMenu = document.getElementById("shopMenu");
 const searchingMenu = document.getElementById("searchingMenu");
 const controlsMenu = document.getElementById("controlsMenu");
 const oneVsOneModeIndicator = document.getElementById("oneVsOneModeIndicator");
@@ -70,6 +71,12 @@ const displayNameStatus = document.getElementById("displayNameStatus");
 const accountSummary = document.getElementById("accountSummary");
 const accountSummaryName = document.getElementById("accountSummaryName");
 const accountSummaryStats = document.getElementById("accountSummaryStats");
+const shopCardBubble = document.getElementById("shopCardBubble");
+const shopCardFlamethrower = document.getElementById("shopCardFlamethrower");
+const shopStatusBubble = document.getElementById("shopStatusBubble");
+const shopStatusFlamethrower = document.getElementById("shopStatusFlamethrower");
+const shopButtonBubble = document.getElementById("shopButtonBubble");
+const shopButtonFlamethrower = document.getElementById("shopButtonFlamethrower");
 
 const MAP_COLOR = "#d3d3d3";
 const GRID_MINOR_SIZE = 35;
@@ -416,6 +423,7 @@ var gameState = {
     players: [],
     bullets: [],
     grenades: [],
+    pickups: [],
     obstacles: [],
     teamLives: null,
 }
@@ -485,6 +493,7 @@ var clientGameStateCache = {
     players: new Map(),
     bullets: new Map(),
     grenades: new Map(),
+    pickups: new Map(),
     obstacles: new Map()
 };
 
@@ -495,6 +504,10 @@ const ONE_VS_ONE_KILL_TARGET = 5;
 let matchEndTimeout = null;
 let forfeitReturnTimeout = null;
 let ambienceStartRetryTimer = null;
+let freeForAllSessionProgress = {
+    kills: 0,
+    coins: 0
+};
 const SCORE_POPUP_VISIBLE_MS = 2600;
 const SCORE_POPUP_FADE_MS = 900;
 let scorePopupShownAt = 0;
@@ -511,6 +524,10 @@ let chatHiddenByUser = false;
 let loadoutTooltipElement = null;
 let loadoutTooltipActiveButton = null;
 let loadoutTooltipsBound = false;
+let loadoutTooltipLastPointerX = null;
+let loadoutTooltipLastPointerY = null;
+let mouseX = null;
+let mouseY = null;
 let authState = {
     initialized: false,
     authenticated: false,
@@ -548,6 +565,23 @@ let playerSettings = loadCharacterSettings();
 const VALID_CHARACTERS = ['berserker', 'ninja', 'king', 'demoman', 'reaver'];
 const VALID_WEAPONS = ['m4', 'pistol', 'shotgun', 'sniper', 'laser', 'taser', 'rocket', 'bubble', 'flamethrower'];
 const VALID_SHARED_ABILITIES = ['grenade', 'invisibility', 'shield', 'turret', 'healingcircle'];
+const SHOP_WEAPONS = Object.freeze({
+    bubble: {
+        name: 'Bubble Launcher',
+        price: 100,
+        card: shopCardBubble,
+        status: shopStatusBubble,
+        button: shopButtonBubble
+    },
+    flamethrower: {
+        name: 'Flamethrower',
+        price: 250,
+        card: shopCardFlamethrower,
+        status: shopStatusFlamethrower,
+        button: shopButtonFlamethrower
+    }
+});
+const SHOP_WEAPON_CODES = Object.freeze(Object.keys(SHOP_WEAPONS));
 let loadoutDraft = sanitizePlayerSettings(playerSettings);
 playerSettings = { ...loadoutDraft };
 let lastAutoAdjustedSecondary = null;
@@ -567,9 +601,12 @@ initializeAuth();
 
 function sanitizePlayerSettings(settings) {
     const characterType = VALID_CHARACTERS.includes(settings?.characterType) ? settings.characterType : 'berserker';
-    const weaponType = VALID_WEAPONS.includes(settings?.weaponType) ? settings.weaponType : 'm4';
+    const weaponType = VALID_WEAPONS.includes(settings?.weaponType) && isWeaponUnlocked(settings?.weaponType)
+        ? settings.weaponType
+        : 'm4';
 
     let secondaryWeaponType = VALID_WEAPONS.includes(settings?.secondaryWeaponType)
+        && isWeaponUnlocked(settings?.secondaryWeaponType)
         ? settings.secondaryWeaponType
         : getFallbackSecondary(weaponType);
     const sharedAbilityType = VALID_SHARED_ABILITIES.includes(settings?.sharedAbilityType)
@@ -586,6 +623,34 @@ function sanitizePlayerSettings(settings) {
         secondaryWeaponType,
         sharedAbilityType
     };
+}
+
+function normalizeOwnedWeapons(ownedWeapons) {
+    if (!Array.isArray(ownedWeapons)) {
+        return [];
+    }
+
+    return [...new Set(
+        ownedWeapons
+            .map((weaponType) => typeof weaponType === 'string' ? weaponType.trim().toLowerCase() : '')
+            .filter((weaponType) => SHOP_WEAPON_CODES.includes(weaponType))
+    )];
+}
+
+function getOwnedWeapons() {
+    return normalizeOwnedWeapons(authState.account?.ownedWeapons);
+}
+
+function isWeaponUnlocked(weaponType) {
+    if (!VALID_WEAPONS.includes(weaponType)) {
+        return false;
+    }
+
+    if (!SHOP_WEAPON_CODES.includes(weaponType)) {
+        return true;
+    }
+
+    return getOwnedWeapons().includes(weaponType);
 }
 
 function registerServiceWorker() {
@@ -1103,13 +1168,18 @@ async function handleGoogleCredentialResponse(response) {
         }
 
         authState.authenticated = true;
-        authState.account = payload.account || null;
+        authState.account = payload.account
+            ? { ...payload.account, ownedWeapons: normalizeOwnedWeapons(payload.account.ownedWeapons) }
+            : null;
         authState.initialized = true;
         authState.mode = 'account';
+        playerSettings = loadCharacterSettings();
+        loadoutDraft = sanitizePlayerSettings(playerSettings);
         socket.reconnect();
         updateRegisterUi();
         updateMainMenuTopActions();
         updateAccountSummaryUi();
+        refreshOwnedWeaponState();
         showMainMenu();
 
         Toastify({
@@ -1135,12 +1205,17 @@ async function initializeAuth() {
         const [config, session] = await Promise.all([fetchAuthConfig(), fetchCurrentSession()]);
         authState.googleClientId = typeof config.googleClientId === 'string' ? config.googleClientId : '';
         authState.authenticated = Boolean(session?.authenticated && session?.account);
-        authState.account = session?.account || null;
+        authState.account = session?.account
+            ? { ...session.account, ownedWeapons: normalizeOwnedWeapons(session.account.ownedWeapons) }
+            : null;
         authState.initialized = true;
         authState.mode = authState.authenticated ? 'account' : null;
+        playerSettings = loadCharacterSettings();
+        loadoutDraft = sanitizePlayerSettings(playerSettings);
         updateRegisterUi();
         updateMainMenuTopActions();
         updateAccountSummaryUi();
+        refreshOwnedWeaponState();
         renderGoogleSignInButton();
         if (!authState.googleButtonRendered) {
             scheduleGoogleButtonRenderAttempts();
@@ -1159,6 +1234,7 @@ async function initializeAuth() {
         updateRegisterUi();
         updateMainMenuTopActions();
         updateAccountSummaryUi();
+        refreshOwnedWeaponState();
         Toastify({
             text: 'Auth setup unavailable. Check server config.',
             duration: 3500,
@@ -1173,6 +1249,7 @@ function continueAsGuest() {
     authState.mode = 'guest';
     updateMainMenuTopActions();
     updateAccountSummaryUi();
+    refreshOwnedWeaponState();
     showMainMenu();
 }
 
@@ -1272,7 +1349,10 @@ async function saveDisplayName() {
         }
 
         if (payload?.account) {
-            authState.account = payload.account;
+            authState.account = {
+                ...payload.account,
+                ownedWeapons: normalizeOwnedWeapons(payload.account.ownedWeapons)
+            };
         }
         updateRegisterUi();
         updateMainMenuTopActions();
@@ -1316,7 +1396,65 @@ async function logoutToAuthChoice() {
     updateRegisterUi();
     updateMainMenuTopActions();
     updateAccountSummaryUi();
+    refreshOwnedWeaponState();
     showAuthChoiceMenu();
+}
+
+async function purchaseShopWeapon(weaponType) {
+    const listing = SHOP_WEAPONS[weaponType];
+    if (!listing) {
+        return;
+    }
+
+    if (authState.mode !== 'account' || !authState.account) {
+        Toastify({
+            text: 'Sign in to buy shop weapons.',
+            duration: 2200,
+            gravity: 'top',
+            position: 'right'
+        }).showToast();
+        return;
+    }
+
+    if (isWeaponUnlocked(weaponType)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/shop/purchase-weapon', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ weaponType })
+        });
+
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload?.error || 'Purchase failed');
+        }
+
+        authState.account = payload.account
+            ? { ...payload.account, ownedWeapons: normalizeOwnedWeapons(payload.account.ownedWeapons) }
+            : authState.account;
+        updateAccountSummaryUi();
+        refreshOwnedWeaponState();
+        soundManager.play('chaching', 0.28);
+
+        Toastify({
+            text: `${listing.name} purchased.`,
+            duration: 2200,
+            gravity: 'top',
+            position: 'right'
+        }).showToast();
+    } catch (error) {
+        Toastify({
+            text: escapeHtml(error.message || 'Purchase failed'),
+            duration: 2800,
+            gravity: 'top',
+            position: 'right'
+        }).showToast();
+    }
 }
 
 function setupMovementStick() {
@@ -1510,22 +1648,30 @@ function requestLeaveMatch() {
     clearLocalInputState();
     clearAmbienceStartRetry();
     soundManager.stop('ambience');
+    const shouldAwaitMatchResult = gameMode === '1v1' ||
+        gameMode === '2v2' ||
+        (
+            isFreeForAllMode() &&
+            (
+                freeForAllSessionProgress.kills > 0 ||
+                freeForAllSessionProgress.coins > 0
+            )
+        );
     socket.emit('leaveMatch');
 
-    if (gameMode === '1v1' || gameMode === '2v2') {
-        gameActive = false;
-        updateMobileHudVisibility();
-        if (forfeitReturnTimeout) {
-            clearTimeout(forfeitReturnTimeout);
-        }
-        // Fallback in case the matchEnded packet is missed.
-        forfeitReturnTimeout = setTimeout(() => {
-            showMainMenu();
-        }, 3000);
+    gameActive = false;
+    updateMobileHudVisibility();
+    if (forfeitReturnTimeout) {
+        clearTimeout(forfeitReturnTimeout);
+    }
+    if (!shouldAwaitMatchResult) {
+        showMainMenu();
         return;
     }
-
-    showMainMenu();
+    // Fallback in case the matchEnded packet is missed.
+    forfeitReturnTimeout = setTimeout(() => {
+        showMainMenu();
+    }, 3000);
 }
 
 function bindMobileHoldKeyButton(button, keyCode) {
@@ -1687,6 +1833,7 @@ function main() {
     socket.on('specialAbility', handleSpecialAbility);
     socket.on('kingAuraPulse', handleKingAuraPulse);
     socket.on('reaverZap', handleReaverZap);
+    socket.on('pickupCollected', handlePickupCollected);
     socket.on('swapWeapons', handleSwapWeapons);
     socket.on('combatText', handleCombatText);
     socket.on('chatMessage', handleChatMessage);
@@ -1716,6 +1863,9 @@ function hideAllMenus() {
     }
     menu.style.display = 'none';
     characterMenu.style.display = 'none';
+    if (shopMenu) {
+        shopMenu.style.display = 'none';
+    }
     searchingMenu.style.display = 'none';
     controlsMenu.style.display = 'none';
     if (accountSummary) {
@@ -1785,10 +1935,43 @@ function showPlayMenu() {
 function showCharacter() {
     hideAllMenus();
     characterMenu.style.display = 'block';
+    refreshOwnedWeaponState();
     loadoutDraft = sanitizePlayerSettings(playerSettings);
     enforceDistinctWeapons();
     syncLoadoutSelectionUI();
     showEquipmentTab('weapon');
+}
+
+function showShop() {
+    hideAllMenus();
+    if (shopMenu) {
+        shopMenu.style.display = 'block';
+    }
+    updateAccountSummaryUi();
+    refreshOwnedWeaponState();
+    showShopTab('weapons');
+    if (menuLink) {
+        menuLink.style.display = 'flex';
+    }
+}
+
+function showShopTab(tabName) {
+    const tabs = {
+        weapons: { tabId: 'shopTabWeapons', panelId: 'shopPanelWeapons' }
+    };
+
+    Object.values(tabs).forEach((tabInfo) => {
+        document.getElementById(tabInfo.tabId)?.classList.remove('active');
+        document.getElementById(tabInfo.panelId)?.classList.remove('active');
+    });
+
+    const selectedTab = tabs[tabName];
+    if (!selectedTab) {
+        return;
+    }
+
+    document.getElementById(selectedTab.tabId)?.classList.add('active');
+    document.getElementById(selectedTab.panelId)?.classList.add('active');
 }
 
 function showControls() {
@@ -1804,7 +1987,7 @@ function showSearching() {
 
 function getFallbackSecondary(primaryWeaponType) {
     const fallbackOrder = ['pistol', 'm4', 'shotgun', 'sniper', 'laser', 'taser', 'rocket', 'bubble', 'flamethrower'];
-    return fallbackOrder.find((weapon) => weapon !== primaryWeaponType) || 'pistol';
+    return fallbackOrder.find((weapon) => weapon !== primaryWeaponType && isWeaponUnlocked(weapon)) || 'pistol';
 }
 
 function showEquipmentTab(tabName) {
@@ -1864,6 +2047,8 @@ function getLoadoutTooltipElement() {
     tooltip.id = 'loadoutTooltip';
     tooltip.className = 'loadout-tooltip';
     tooltip.setAttribute('aria-hidden', 'true');
+    tooltip.style.left = '-9999px';
+    tooltip.style.top = '-9999px';
     document.body.appendChild(tooltip);
     loadoutTooltipElement = tooltip;
     return loadoutTooltipElement;
@@ -1932,31 +2117,12 @@ function createLoadoutTooltipMarkup(data) {
     `;
 }
 
-function positionLoadoutTooltip(anchorX, anchorY) {
+function positionLoadoutTooltip() {
     const tooltip = getLoadoutTooltipElement();
-    const cursorOffset = 14;
-    const viewportPadding = 8;
-    const rect = tooltip.getBoundingClientRect();
-
-    let x = anchorX + cursorOffset;
-    let y = anchorY + cursorOffset;
-
-    if (x + rect.width > window.innerWidth - viewportPadding) {
-        x = anchorX - rect.width - cursorOffset;
-    }
-    if (x < viewportPadding) {
-        x = viewportPadding;
-    }
-
-    if (y + rect.height > window.innerHeight - viewportPadding) {
-        y = anchorY - rect.height - cursorOffset;
-    }
-    if (y < viewportPadding) {
-        y = viewportPadding;
-    }
-
-    tooltip.style.left = `${x}px`;
-    tooltip.style.top = `${y}px`;
+    const offset = 14;
+    tooltip.style.left = `${mouseX + offset}px`;
+    tooltip.style.top = `${mouseY + offset}px`;
+    return true;
 }
 
 function showLoadoutTooltipForButton(button, anchorX = null, anchorY = null) {
@@ -1972,15 +2138,34 @@ function showLoadoutTooltipForButton(button, anchorX = null, anchorY = null) {
 
     const tooltip = getLoadoutTooltipElement();
     tooltip.innerHTML = createLoadoutTooltipMarkup(data);
-    tooltip.classList.add('show');
-    tooltip.setAttribute('aria-hidden', 'false');
 
     const buttonRect = button.getBoundingClientRect();
     const fallbackX = buttonRect.right;
     const fallbackY = buttonRect.top + (buttonRect.height / 2);
-    const nextX = Number.isFinite(Number(anchorX)) ? Number(anchorX) : fallbackX;
-    const nextY = Number.isFinite(Number(anchorY)) ? Number(anchorY) : fallbackY;
-    positionLoadoutTooltip(nextX, nextY);
+    const hasPointerAnchor = Number.isFinite(Number(anchorX)) && Number.isFinite(Number(anchorY));
+    const hasGlobalPointerAnchor =
+        Number.isFinite(mouseX) &&
+        Number.isFinite(mouseY);
+    const canReusePointerAnchor =
+        Number.isFinite(loadoutTooltipLastPointerX) &&
+        Number.isFinite(loadoutTooltipLastPointerY);
+    const nextX = hasPointerAnchor
+        ? Number(anchorX)
+        : (hasGlobalPointerAnchor
+            ? mouseX
+            : (canReusePointerAnchor ? loadoutTooltipLastPointerX : fallbackX));
+    const nextY = hasPointerAnchor
+        ? Number(anchorY)
+        : (hasGlobalPointerAnchor
+            ? mouseY
+            : (canReusePointerAnchor ? loadoutTooltipLastPointerY : fallbackY));
+    const positioned = positionLoadoutTooltip();
+    if (!positioned) {
+        hideLoadoutTooltip();
+        return;
+    }
+    tooltip.classList.add('show');
+    tooltip.setAttribute('aria-hidden', 'false');
     loadoutTooltipActiveButton = button;
 }
 
@@ -2005,11 +2190,28 @@ function setupLoadoutTooltips() {
         return;
     }
 
+    const trackPointerPosition = (event) => {
+        const x = Number(event?.clientX);
+        const y = Number(event?.clientY);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            return;
+        }
+        mouseX = x;
+        mouseY = y;
+    };
+
+    document.addEventListener('pointermove', trackPointerPosition, { passive: true });
+    document.addEventListener('mousemove', trackPointerPosition, { passive: true });
+    document.addEventListener('pointerdown', trackPointerPosition, { passive: true });
+    document.addEventListener('mousedown', trackPointerPosition, { passive: true });
+
     optionButtons.forEach((button) => {
         button.addEventListener('pointerenter', (event) => {
             if (event.pointerType === 'touch') {
                 return;
             }
+            mouseX = event.clientX;
+            mouseY = event.clientY;
             showLoadoutTooltipForButton(button, event.clientX, event.clientY);
         });
 
@@ -2017,7 +2219,25 @@ function setupLoadoutTooltips() {
             if (event.pointerType === 'touch' || loadoutTooltipActiveButton !== button) {
                 return;
             }
-            positionLoadoutTooltip(event.clientX, event.clientY);
+
+            positionLoadoutTooltip();
+        });
+
+        button.addEventListener('pointerdown', (event) => {
+            if (event.pointerType === 'touch') {
+                return;
+            }
+            mouseX = event.clientX;
+            mouseY = event.clientY;
+            loadoutTooltipLastPointerX = event.clientX;
+            loadoutTooltipLastPointerY = event.clientY;
+            showLoadoutTooltipForButton(button, event.clientX, event.clientY);
+        });
+
+        button.addEventListener('click', (event) => {
+            mouseX = event.clientX;
+            mouseY = event.clientY;
+            showLoadoutTooltipForButton(button, event.clientX, event.clientY);
         });
 
         button.addEventListener('pointerleave', () => {
@@ -2055,6 +2275,56 @@ function syncLoadoutSelectionUI() {
 
         button.classList.toggle('active', isActive);
     });
+}
+
+function syncWeaponOwnershipUi() {
+    const optionButtons = document.querySelectorAll('.equip-option[data-type="weapon"], .equip-option[data-type="secondary"]');
+    optionButtons.forEach((button) => {
+        const weaponType = button.dataset.value;
+        button.style.display = isWeaponUnlocked(weaponType) ? '' : 'none';
+    });
+}
+
+function syncShopUi() {
+    Object.entries(SHOP_WEAPONS).forEach(([weaponType, config]) => {
+        if (!config.card || !config.status || !config.button) {
+            return;
+        }
+
+        const owned = isWeaponUnlocked(weaponType);
+        const signedIn = authState.mode === 'account' && authState.account;
+        const currentBux = Number(authState.account?.bux || 0);
+        const canAfford = currentBux >= config.price;
+
+        config.card.classList.toggle('owned', owned);
+
+        if (owned) {
+            config.status.textContent = 'Purchased';
+            config.button.textContent = 'Owned';
+            config.button.disabled = true;
+            return;
+        }
+
+        if (!signedIn) {
+            config.status.textContent = 'Sign in to purchase';
+            config.button.textContent = 'Buy';
+            config.button.disabled = true;
+            return;
+        }
+
+        config.status.textContent = canAfford ? 'Ready to purchase' : `Need ${config.price - currentBux} more bux`;
+        config.button.textContent = 'Buy';
+        config.button.disabled = !canAfford;
+    });
+}
+
+function refreshOwnedWeaponState() {
+    playerSettings = sanitizePlayerSettings(playerSettings);
+    loadoutDraft = sanitizePlayerSettings(loadoutDraft);
+    enforceDistinctWeapons();
+    syncWeaponOwnershipUi();
+    syncLoadoutSelectionUI();
+    syncShopUi();
 }
 
 function enforceDistinctWeapons() {
@@ -2209,6 +2479,16 @@ function animateMenuBackdrop(timestamp) {
 }
 
 function selectEquip(type, value) {
+    if ((type === 'weapon' || type === 'secondary') && !isWeaponUnlocked(value)) {
+        Toastify({
+            text: 'Purchase that weapon in the shop first.',
+            duration: 2200,
+            gravity: "top",
+            position: "right"
+        }).showToast();
+        return;
+    }
+
     if (type === 'character') {
         loadoutDraft.characterType = value;
     } else if (type === 'weapon') {
@@ -2235,6 +2515,7 @@ function selectEquip(type, value) {
 }
 
 function save() {
+    loadoutDraft = sanitizePlayerSettings(loadoutDraft);
     enforceDistinctWeapons();
     const { characterType, weaponType, secondaryWeaponType, sharedAbilityType } = loadoutDraft;
     
@@ -2248,6 +2529,10 @@ function save() {
     };
     
     showMainMenu();
+}
+
+function isFreeForAllMode(modeValue = gameMode) {
+    return modeValue === 'ffa' || modeValue === 'freeForAll';
 }
 
 function cancelSearch() {
@@ -2270,12 +2555,16 @@ function resetClientCache() {
     gameState.players = [];
     gameState.bullets = [];
     gameState.grenades = [];
+    gameState.pickups = [];
     gameState.obstacles = [];
     gameState.teamLives = null;
     latestTeamLives = null;
+    freeForAllSessionProgress.kills = 0;
+    freeForAllSessionProgress.coins = 0;
     clientGameStateCache.players.clear();
     clientGameStateCache.bullets.clear();
     clientGameStateCache.grenades.clear();
+    clientGameStateCache.pickups.clear();
     clientGameStateCache.obstacles.clear();
     combatTexts.length = 0;
     explosiveEffects.length = 0;
@@ -2330,10 +2619,13 @@ function getNowMs() {
 
 function cloneStateSnapshot(state) {
     return {
-        players: (state.players || []).map((player) => ({ ...player })),
-        bullets: (state.bullets || []).map((bullet) => ({ ...bullet })),
-        grenades: (state.grenades || []).map((grenade) => ({ ...grenade })),
-        obstacles: (state.obstacles || []).map((obstacle) => ({ ...obstacle })),
+        players: ensureArray(state.players).map((player) => ({ ...player })),
+        bullets: ensureArray(state.bullets).map((bullet) => ({ ...bullet })),
+        grenades: ensureArray(state.grenades).map((grenade) => ({ ...grenade })),
+        pickups: ensureArray(state.pickups).map((pickup) => ({ ...pickup })),
+        obstacles: ensureArray(state.obstacles).map((obstacle) => ({ ...obstacle })),
+        teamLives: state.teamLives || null,
+        gameMode: state.gameMode || null,
     };
 }
 
@@ -2424,7 +2716,10 @@ function interpolateSnapshots(olderSnapshot, newerSnapshot, targetTime) {
         players: interpolateEntities(olderState.players, newerState.players, alpha, ['x', 'y'], ['angle']),
         bullets: interpolateEntities(olderState.bullets, newerState.bullets, alpha, ['x', 'y'], ['angle']),
         grenades: interpolateEntities(olderState.grenades, newerState.grenades, alpha, ['x', 'y'], ['spin']),
+        pickups: ensureArray(newerState.pickups).map((pickup) => ({ ...pickup })),
         obstacles: interpolateEntities(olderState.obstacles, newerState.obstacles, alpha, ['x', 'y'], ['angle']),
+        teamLives: newerState.teamLives || null,
+        gameMode: newerState.gameMode || null,
     };
 }
 
@@ -2480,7 +2775,10 @@ function extrapolateSnapshot(latestSnapshot, previousSnapshot, now) {
         players: extrapolateEntities(previousState.players, latestState.players, alpha, ['x', 'y'], ['angle']),
         bullets: extrapolateEntities(previousState.bullets, latestState.bullets, alpha, ['x', 'y'], ['angle']),
         grenades: extrapolateEntities(previousState.grenades, latestState.grenades, alpha, ['x', 'y'], ['spin']),
+        pickups: latestState.pickups,
         obstacles: extrapolateEntities(previousState.obstacles, latestState.obstacles, alpha, ['x', 'y'], ['angle']),
+        teamLives: latestState.teamLives || null,
+        gameMode: latestState.gameMode || null,
     };
 }
 
@@ -2854,6 +3152,10 @@ function lerpAngle(start, end, alpha) {
     return start + shortestAngleDelta(start, end) * alpha;
 }
 
+function ensureArray(value) {
+    return Array.isArray(value) ? value : [];
+}
+
 function clamp(value, minValue, maxValue) {
     return Math.max(minValue, Math.min(maxValue, value));
 }
@@ -2869,10 +3171,11 @@ function applyDeltaToGameState(delta) {
     // Check if this is a full state update (no frameNumber means it's a full state)
     if (!delta.frameNumber) {
         // Full state update - replace everything
-        gameState.players = delta.players || [];
-        gameState.bullets = delta.bullets || [];
-        gameState.grenades = delta.grenades || [];
-        gameState.obstacles = delta.obstacles || [];
+        gameState.players = ensureArray(delta.players);
+        gameState.bullets = ensureArray(delta.bullets);
+        gameState.grenades = ensureArray(delta.grenades);
+        gameState.pickups = ensureArray(delta.pickups);
+        gameState.obstacles = ensureArray(delta.obstacles);
         gameState.teamLives = Object.prototype.hasOwnProperty.call(delta, 'teamLives')
             ? (delta.teamLives || null)
             : gameState.teamLives;
@@ -2885,6 +3188,7 @@ function applyDeltaToGameState(delta) {
         clientGameStateCache.players.clear();
         clientGameStateCache.bullets.clear();
         clientGameStateCache.grenades.clear();
+        clientGameStateCache.pickups.clear();
         clientGameStateCache.obstacles.clear();
         
         for (const player of gameState.players) {
@@ -2896,6 +3200,9 @@ function applyDeltaToGameState(delta) {
         for (const grenade of gameState.grenades) {
             clientGameStateCache.grenades.set(grenade.id, grenade);
         }
+        for (const pickup of gameState.pickups) {
+            clientGameStateCache.pickups.set(pickup.id, pickup);
+        }
         for (const obstacle of gameState.obstacles) {
             clientGameStateCache.obstacles.set(obstacle.id, obstacle);
         }
@@ -2903,7 +3210,7 @@ function applyDeltaToGameState(delta) {
     }
     
     // Handle player updates
-    if (delta.players) {
+    if (Array.isArray(delta.players)) {
         for (const playerUpdate of delta.players) {
             if (playerUpdate.removed) {
                 // Remove player
@@ -2923,7 +3230,7 @@ function applyDeltaToGameState(delta) {
     }
     
     // Handle bullet updates
-    if (delta.bullets) {
+    if (Array.isArray(delta.bullets)) {
         for (const bulletUpdate of delta.bullets) {
             const existingIndex = gameState.bullets.findIndex(b => b.id === bulletUpdate.id);
             if (existingIndex >= 0) {
@@ -2936,7 +3243,7 @@ function applyDeltaToGameState(delta) {
     }
 
     // Handle grenade updates
-    if (delta.grenades) {
+    if (Array.isArray(delta.grenades)) {
         for (const grenadeUpdate of delta.grenades) {
             const existingIndex = gameState.grenades.findIndex(g => g.id === grenadeUpdate.id);
             if (existingIndex >= 0) {
@@ -2947,9 +3254,22 @@ function applyDeltaToGameState(delta) {
             clientGameStateCache.grenades.set(grenadeUpdate.id, grenadeUpdate);
         }
     }
+
+    // Handle pickup updates
+    if (Array.isArray(delta.pickups)) {
+        for (const pickupUpdate of delta.pickups) {
+            const existingIndex = gameState.pickups.findIndex((pickup) => pickup.id === pickupUpdate.id);
+            if (existingIndex >= 0) {
+                gameState.pickups[existingIndex] = { ...gameState.pickups[existingIndex], ...pickupUpdate };
+            } else {
+                gameState.pickups.push(pickupUpdate);
+            }
+            clientGameStateCache.pickups.set(pickupUpdate.id, pickupUpdate);
+        }
+    }
     
     // Handle removed bullets
-    if (delta.removedBullets) {
+    if (Array.isArray(delta.removedBullets)) {
         for (const bulletId of delta.removedBullets) {
             const removedBullet = clientGameStateCache.bullets.get(bulletId);
             if (removedBullet?.kind === 'rocket') {
@@ -2962,7 +3282,7 @@ function applyDeltaToGameState(delta) {
     }
 
     // Handle removed grenades
-    if (delta.removedGrenades) {
+    if (Array.isArray(delta.removedGrenades)) {
         for (const grenadeId of delta.removedGrenades) {
             const removedGrenade = clientGameStateCache.grenades.get(grenadeId);
             if (removedGrenade?.kind === 'demoExplosive' || removedGrenade?.kind === 'grenade') {
@@ -2973,9 +3293,17 @@ function applyDeltaToGameState(delta) {
             clientGameStateCache.grenades.delete(grenadeId);
         }
     }
+
+    // Handle removed pickups
+    if (Array.isArray(delta.removedPickups)) {
+        for (const pickupId of delta.removedPickups) {
+            gameState.pickups = gameState.pickups.filter((pickup) => pickup.id !== pickupId);
+            clientGameStateCache.pickups.delete(pickupId);
+        }
+    }
     
     // Handle obstacle updates
-    if (delta.obstacles) {
+    if (Array.isArray(delta.obstacles)) {
         for (const obstacleUpdate of delta.obstacles) {
             const existingIndex = gameState.obstacles.findIndex(o => o.id === obstacleUpdate.id);
             if (existingIndex >= 0) {
@@ -2997,7 +3325,7 @@ function applyDeltaToGameState(delta) {
     }
     
     // Handle removed obstacles
-    if (delta.removedObstacles) {
+    if (Array.isArray(delta.removedObstacles)) {
         for (const obstacleId of delta.removedObstacles) {
             gameState.obstacles = gameState.obstacles.filter(o => o.id !== obstacleId);
             clientGameStateCache.obstacles.delete(obstacleId);
@@ -3168,6 +3496,10 @@ function draw(gameState) {
     
     for (const obstacle of gameState.obstacles) {
         drawObstacle(obstacle);
+    }
+
+    for (const pickup of gameState.pickups) {
+        drawPickup(pickup);
     }
     
     for (const bullet of gameState.bullets) {
@@ -3672,6 +4004,60 @@ function drawHealingCircle(player) {
     ctx.restore();
 }
 
+function drawPickup(pickup) {
+    if (!pickup || typeof pickup.x !== 'number' || typeof pickup.y !== 'number') {
+        return;
+    }
+
+    if (pickup.type === 'heal') {
+        const pulse = 1 + Math.sin(Date.now() / 170) * 0.14;
+        const size = (pickup.radius || 18) * 1.25 * pulse;
+        const arm = size * 0.95;
+        const thickness = Math.max(5, size * 0.42);
+
+        ctx.save();
+        ctx.translate(pickup.x, pickup.y);
+        ctx.shadowColor = 'rgba(80, 255, 120, 0.7)';
+        ctx.shadowBlur = 12;
+        ctx.fillStyle = '#5dff87';
+        ctx.globalAlpha = 0.95;
+        ctx.fillRect(-thickness / 2, -arm / 2, thickness, arm);
+        ctx.fillRect(-arm / 2, -thickness / 2, arm, thickness);
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 0.28;
+        ctx.beginPath();
+        ctx.arc(0, 0, size * 0.95, 0, Math.PI * 2);
+        ctx.fillStyle = '#89ffad';
+        ctx.fill();
+        ctx.restore();
+        return;
+    }
+
+    if (pickup.type === 'coin') {
+        const radius = pickup.radius || 14;
+        const pulse = 1 + Math.sin(Date.now() / 190 + pickup.x * 0.01) * 0.1;
+        const drawR = radius * pulse;
+        ctx.save();
+        ctx.translate(pickup.x, pickup.y);
+        ctx.shadowColor = 'rgba(255, 220, 60, 0.55)';
+        ctx.shadowBlur = 8;
+        ctx.fillStyle = '#ffd447';
+        ctx.beginPath();
+        ctx.arc(0, 0, drawR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#f4b300';
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#fff1a3';
+        ctx.font = `bold ${Math.max(10, Math.round(drawR * 0.9))}px CustomFont`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('$', 0, 1);
+        ctx.restore();
+    }
+}
+
 function drawStunStars(player) {
     const time = Date.now() / 180;
     const baseY = -player.radius - 15;
@@ -3994,18 +4380,21 @@ function handleKeyUp(event) {
 }
 
 function handleMouseMove(event) {
+    mouseX = event.clientX;
+    mouseY = event.clientY;
+
     if (isChatFocused()) {
         return;
     }
 
     const rect = canvas.getBoundingClientRect();
-    const mouseX = event.clientX - rect.left;
-    const mouseY = event.clientY - rect.top;
+    const canvasMouseX = event.clientX - rect.left;
+    const canvasMouseY = event.clientY - rect.top;
     
     const centerX = canvas.width / 2;
     const centerY = canvas.height / 2;
     
-    const angle = Math.atan2(mouseY - centerY, mouseX - centerX);
+    const angle = Math.atan2(canvasMouseY - centerY, canvasMouseX - centerX);
     localAimAngle = angle;
     socket.emit('changeAngle', angle);
 }
@@ -4066,7 +4455,7 @@ function handleOpponentLeft() {
 }
 
 function handlePlayerLeft(data) {
-    if (gameMode === 'ffa') {
+    if (isFreeForAllMode()) {
         Toastify({
             text: `A player left the game. ${data.playerCount} players remaining.`,
             duration: 3000,
@@ -4084,6 +4473,12 @@ function handlePlayerLeft(data) {
 }
 
 function handleKill(data) {
+    if (isFreeForAllMode()) {
+        freeForAllSessionProgress.kills = Math.max(
+            freeForAllSessionProgress.kills + 1,
+            Math.max(0, Math.round(Number(data?.killCount || 0)))
+        );
+    }
     Toastify({
         text: `You killed ${data.killedPlayer}! You have ${data.killCount} kills.`,
         duration: 3000,
@@ -4143,6 +4538,19 @@ function handleReaverZap() {
     soundManager.play('zap', 0.3);
 }
 
+function handlePickupCollected(data) {
+    if (data?.type === 'heal') {
+        soundManager.play('heal', 0.25);
+        return;
+    }
+    if (data?.type === 'coin') {
+        if (isFreeForAllMode()) {
+            freeForAllSessionProgress.coins += 1;
+        }
+        soundManager.play('coin', 0.25);
+    }
+}
+
 function handleCombatText(data) {
     if (!data || typeof data.x !== 'number' || typeof data.y !== 'number') return;
 
@@ -4172,11 +4580,18 @@ function handleMatchEnded(data) {
     soundManager.stop('flame');
     clearAmbienceStartRetry();
     soundManager.stop('ambience');
-    matchEndTitle.textContent = data.youWon ? 'Victory' : 'Defeat';
+    const isFreeForAllResult = isFreeForAllMode(data.gameMode) || isFreeForAllMode();
+    matchEndTitle.textContent = isFreeForAllResult
+        ? 'Match Ended'
+        : (data.youWon ? 'Victory' : 'Defeat');
     if (gameMode === '2v2' || data.winnerTeam) {
         const redLives = Number(data.teamLives?.red ?? gameState.teamLives?.red ?? 0);
         const blueLives = Number(data.teamLives?.blue ?? gameState.teamLives?.blue ?? 0);
         matchEndScore.textContent = `Red ${redLives} - Blue ${blueLives}`;
+    } else if (isFreeForAllResult) {
+        const kills = Math.max(0, Math.round(Number(data.yourKills || 0)));
+        const coinsCollected = Math.max(0, Math.round(Number(data.coinsCollected || 0)));
+        matchEndScore.textContent = `${kills} Kills - ${coinsCollected} Coins`;
     } else {
         matchEndScore.textContent = `${data.yourKills || 0} - ${data.opponentKills || 0}`;
     }
@@ -4188,7 +4603,9 @@ function handleMatchEnded(data) {
 
         const isTwoVsTwoMatch = gameMode === '2v2' || data.winnerTeam;
         const hasEloDelta = Number.isFinite(Number(data.eloDelta));
-        if (isTwoVsTwoMatch) {
+        if (isFreeForAllResult) {
+            subtitle = 'Returning to menu...';
+        } else if (isTwoVsTwoMatch) {
             const winnerTeam = data.winnerTeam === 'red' ? 'Red' : 'Blue';
             subtitle = `${subtitle} ${winnerTeam} team wins!`;
         } else if (hasEloDelta) {
@@ -4207,10 +4624,24 @@ function handleMatchEnded(data) {
         } else if (data.rated === false) {
             subtitle = `${subtitle} Guest rating stays at 500.`;
         }
+
+        const hasBuxDelta = Number.isFinite(Number(data.buxDelta));
+        const hasBuxEarned = Number.isFinite(Number(data.buxEarned));
+        if (hasBuxDelta || hasBuxEarned) {
+            const buxEarned = hasBuxEarned ? Number(data.buxEarned) : Number(data.buxDelta || 0);
+            const buxDelta = hasBuxDelta ? Number(data.buxDelta) : buxEarned;
+            const buxSuffix = Number.isFinite(Number(data.newBux)) ? ` (${Number(data.newBux)})` : '';
+            subtitle = `${subtitle} Bux ${buxDelta >= 0 ? '+' : ''}${buxDelta}${buxSuffix}.`;
+
+            if (authState.mode === 'account' && authState.account && Number.isFinite(Number(data.newBux))) {
+                authState.account.bux = Number(data.newBux);
+                updateAccountSummaryUi();
+            }
+        }
         matchEndSubtitle.textContent = subtitle;
     }
     matchEndCard.classList.remove('victory', 'defeat');
-    matchEndCard.classList.add(data.youWon ? 'victory' : 'defeat');
+    matchEndCard.classList.add((isFreeForAllResult || data.youWon) ? 'victory' : 'defeat');
     matchEndCard.style.animation = 'none';
     // Force reflow so pop animation restarts each match end.
     void matchEndCard.offsetWidth;
