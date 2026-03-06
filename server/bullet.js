@@ -1,4 +1,5 @@
 const { circleRectCollision, circleRotatedRectCollision, hasRotation } = require('./collision');
+const { applyDamage } = require('./combat');
 
 function isFriendlyObstacleForShooter(obstacle, owner) {
     if (!obstacle || !owner) return false;
@@ -136,31 +137,13 @@ class Bullet {
 
             const falloff = Math.max(0.3, 1 - (distance / this.explosionRadius));
             const damage = this.explosionDamage * falloff;
-            const hpBeforeDamage = player.HP;
-            player.takeDamage(damage, this.playerId);
-            const damageDealt = Math.max(0, hpBeforeDamage - player.HP);
-            player.flashingTimer = 1;
-
-            if (damageDealt > 0 && io && this.playerId) {
-                io.to(this.playerId).emit('combatText', {
-                    type: 'damage',
-                    amount: damageDealt,
-                    x: player.x,
-                    y: player.y - player.radius - 10
-                });
-            }
-
-            if (owner?.passiveAbility) {
-                const healedAmount = owner.passiveAbility.onDamageDealt(owner, damageDealt, player, gameState) || 0;
-                if (healedAmount > 0 && io && this.playerId) {
-                    io.to(this.playerId).emit('combatText', {
-                        type: 'healing',
-                        amount: healedAmount,
-                        x: owner.x,
-                        y: owner.y - owner.radius - 10
-                    });
-                }
-            }
+            applyDamage({
+                gameState,
+                target: player,
+                amount: damage,
+                sourceId: this.playerId,
+                attacker: owner
+            });
         }
 
         this.destroy(gameState);

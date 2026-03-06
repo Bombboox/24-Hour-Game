@@ -1,16 +1,7 @@
 const { Shield, AutoTurret } = require('./obstacle');
 const { GrenadeProjectile, DemoExplosive } = require('./grenade');
 const { Bullet } = require('./bullet');
-
-function emitHealingCombatText(gameState, character, amount) {
-    if (!gameState?.io || !character?.id || amount <= 0) return;
-    gameState.io.to(character.id).emit('combatText', {
-        type: 'healing',
-        amount,
-        x: character.x,
-        y: character.y - character.radius - 10
-    });
-}
+const { emitCombatText, applyHealing, applyDamage } = require('./combat');
 
 class SpecialAbility {
     constructor(options = {}) {
@@ -159,7 +150,7 @@ class NinjaMomentum extends PassiveAbility {
         this.updateSpeedBuff(character);
         character.HP = Math.min(character.HP + 50, character.maxHP * 2);
         const healedAmount = Math.max(0, character.HP - hpBefore);
-        emitHealingCombatText(gameState, character, healedAmount);
+        emitCombatText(gameState, character.id, 'healing', healedAmount, character);
     }
 
     onUpdate(deltaTime, character) {
@@ -451,9 +442,14 @@ class ReaverArcPassive extends PassiveAbility {
         if (targets.length === 0) return false;
 
         for (const target of targets) {
-            const hpBefore = target.HP;
-            target.takeDamage(this.damage, character.id);
-            target.flashingTimer = 1;
+            applyDamage({
+                gameState,
+                target,
+                amount: this.damage,
+                sourceId: character.id,
+                attacker: character,
+                applyPassiveHealing: false
+            });
             target.stunnedTimer = Math.max(target.stunnedTimer || 0, this.stunDuration);
             target.reaverStackTimers = [];
             target.reaverStacks = 0;
@@ -465,16 +461,6 @@ class ReaverArcPassive extends PassiveAbility {
                 targetY: target.y,
                 expiresAt: now + 220
             });
-
-            const damageDealt = Math.max(0, hpBefore - target.HP);
-            if (damageDealt > 0 && gameState?.io) {
-                gameState.io.to(character.id).emit('combatText', {
-                    type: 'damage',
-                    amount: damageDealt,
-                    x: target.x,
-                    y: target.y - target.radius - 10
-                });
-            }
         }
 
         this.activate();
@@ -621,7 +607,7 @@ class Enlarge extends SpecialAbility {
         character.maxHP = this.originalMaxHP * this.healthMultiplier;
         character.HP = Math.min(character.HP * 1.5 + 100, character.maxHP);
         const healedAmount = Math.max(0, character.HP - hpBefore);
-        emitHealingCombatText(gameState, character, healedAmount);
+        emitCombatText(gameState, character.id, 'healing', healedAmount, character);
         character.enlarged = true;
         character.defense = 0.5;
     }
@@ -830,33 +816,54 @@ class HealingCircle extends SpecialAbility {
         this.effectY = null;
         this.healTextTimer = 0;
         this.healTextInterval = options.healTextInterval ?? 10;
-        this.pendingHealText = 0;
+        this.pendingHealText = new Map();
     }
 
     onStart(character) {
         this.effectX = character.x;
         this.effectY = character.y;
         this.healTextTimer = 0;
-        this.pendingHealText = 0;
+        this.pendingHealText = new Map();
     }
 
     update(deltaTime, character, gameState) {
         if (this.isActive) {
-            const dx = character.x - (this.effectX ?? character.x);
-            const dy = character.y - (this.effectY ?? character.y);
-            const distance = Math.sqrt(dx * dx + dy * dy);
+            const recipients = Array.isArray(gameState?.players) ? gameState.players : [];
+            for (const target of recipients) {
+                if (!target) continue;
 
-            if (distance <= this.effectRadius) {
-                const hpBefore = character.HP;
-                const healAmount = character.maxHP * this.healPerSecondRatio * (deltaTime / 25);
-                if(character.HP < character.maxHP) character.HP = Math.min(character.maxHP, character.HP + healAmount);
-                this.pendingHealText += Math.max(0, character.HP - hpBefore);
+                const samePlayer = target.id === character.id;
+                const sameTeam = !!character.team && !!target.team && character.team === target.team;
+                if (!samePlayer && !sameTeam) continue;
+
+                const dx = target.x - (this.effectX ?? character.x);
+                const dy = target.y - (this.effectY ?? character.y);
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance > this.effectRadius) continue;
+
+                const healAmount = target.maxHP * this.healPerSecondRatio * (deltaTime / 25);
+                const healedAmount = applyHealing({
+                    gameState,
+                    target,
+                    amount: healAmount,
+                    recipientId: target.id,
+                    emitText: false
+                });
+                if (healedAmount > 0) {
+                    this.pendingHealText.set(target.id, (this.pendingHealText.get(target.id) || 0) + healedAmount);
+                }
             }
 
             this.healTextTimer += deltaTime;
             if (this.healTextTimer >= this.healTextInterval) {
-                emitHealingCombatText(gameState, character, this.pendingHealText);
-                this.pendingHealText = 0;
+                for (const target of recipients) {
+                    if (!target?.id) continue;
+                    const pending = this.pendingHealText.get(target.id) || 0;
+                    if (pending > 0) {
+                        emitCombatText(gameState, target.id, 'healing', pending, target);
+                    }
+                }
+                this.pendingHealText.clear();
                 this.healTextTimer = 0;
             }
 
@@ -864,8 +871,14 @@ class HealingCircle extends SpecialAbility {
             if (this.currentDuration <= 0) {
                 this.isActive = false;
                 this.currentDuration = 0;
-                emitHealingCombatText(gameState, character, this.pendingHealText);
-                this.pendingHealText = 0;
+                for (const target of recipients) {
+                    if (!target?.id) continue;
+                    const pending = this.pendingHealText.get(target.id) || 0;
+                    if (pending > 0) {
+                        emitCombatText(gameState, target.id, 'healing', pending, target);
+                    }
+                }
+                this.pendingHealText.clear();
                 this.onEnd(character, gameState);
             }
         } else {
@@ -877,7 +890,7 @@ class HealingCircle extends SpecialAbility {
         this.effectX = null;
         this.effectY = null;
         this.healTextTimer = 0;
-        this.pendingHealText = 0;
+        this.pendingHealText = new Map();
     }
 }
 

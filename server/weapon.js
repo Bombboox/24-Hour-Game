@@ -1,5 +1,6 @@
 const { Bullet } = require('./bullet');
 const { circleRectCollision, circleRotatedRectCollision, hasRotation } = require('./collision');
+const { applyDamage } = require('./combat');
 
 class Weapon {
     constructor(options = {}) {
@@ -410,37 +411,17 @@ class LaserGun extends Weapon {
         }
 
         if (hitPlayer) {
-            const hpBefore = hitPlayer.HP;
-            hitPlayer.takeDamage(this.currentDamage, playerId);
-            const damageDealt = Math.max(0, hpBefore - hitPlayer.HP);
+            const damageDealt = applyDamage({
+                gameState,
+                target: hitPlayer,
+                amount: this.currentDamage,
+                sourceId: playerId,
+                attacker: owner,
+                emitHitAudio: true
+            });
             if (damageDealt > 0) {
                 this.timeSinceLastHit = 0;
                 this.currentDamage = Math.min(this.maxDamage, this.currentDamage + this.rampStep);
-
-                if (io && playerId) {
-                    io.to(playerId).emit('hit');
-                    io.to(hitPlayer.id).emit('gotHit');
-                    io.to(playerId).emit('combatText', {
-                        type: 'damage',
-                        amount: damageDealt,
-                        x: hitPlayer.x,
-                        y: hitPlayer.y - hitPlayer.radius - 10
-                    });
-                }
-
-                if (owner?.passiveAbility) {
-                    const healedAmount = owner.passiveAbility.onDamageDealt(owner, damageDealt, hitPlayer, gameState) || 0;
-                    if (healedAmount > 0 && io && playerId) {
-                        io.to(playerId).emit('combatText', {
-                            type: 'healing',
-                            amount: healedAmount,
-                            x: owner.x,
-                            y: owner.y - owner.radius - 10
-                        });
-                    }
-                }
-
-                hitPlayer.flashingTimer = 1;
             }
         }
 

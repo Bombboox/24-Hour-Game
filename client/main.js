@@ -1831,6 +1831,7 @@ function main() {
     socket.on('gotHit', handleGotHit);
     socket.on('firedWeapon', handleFiredWeapon);
     socket.on('specialAbility', handleSpecialAbility);
+    socket.on('sharedAbility', handleSharedAbility);
     socket.on('kingAuraPulse', handleKingAuraPulse);
     socket.on('reaverZap', handleReaverZap);
     socket.on('pickupCollected', handlePickupCollected);
@@ -4527,6 +4528,13 @@ function handleSpecialAbility() {
     const thisPlayer = gameState.players.find((player) => player.id === socket.id);
     if (thisPlayer?.specialAbility?.name === 'Reaver Shard') {
         soundManager.play('reaver_fire', 0.25);
+    }
+}
+
+function handleSharedAbility() {
+    const thisPlayer = gameState.players.find((player) => player.id === socket.id);
+    if (thisPlayer?.sharedAbility?.name === 'Healing Circle') {
+        soundManager.play('heal2', 0.28);
     }
 }
 

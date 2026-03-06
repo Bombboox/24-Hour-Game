@@ -3,6 +3,7 @@ const { Bullet } = require('./bullet');
 const { Obstacle } = require('./obstacle');
 const { MAP_RADIUS } = require('./constants');
 const { circleObstacleCollision } = require('./collision');
+const { emitCombatText, applyHealing, applyDamage } = require('./combat');
 const ONE_VS_ONE_KILL_TARGET = 5;
 const TWO_VS_TWO_TEAM_LIVES = 10;
 const TWO_VS_TWO_RESPAWN_DELAY = 75; // 3 seconds (delta units)
@@ -203,7 +204,7 @@ function updatePickupSpawns(gameState, deltaTime) {
     }
 }
 
-function applyActiveHealOverTime(player, deltaTime) {
+function applyActiveHealOverTime(player, deltaTime, gameState) {
     if (!Array.isArray(player.pickupHealOverTimeEffects) || player.pickupHealOverTimeEffects.length === 0) {
         return;
     }
@@ -212,15 +213,26 @@ function applyActiveHealOverTime(player, deltaTime) {
     for (const effect of player.pickupHealOverTimeEffects) {
         const remaining = Math.max(0, (effect.remaining || 0) - deltaTime);
         const step = Math.max(0, Number(effect.healPerDeltaUnit) || 0) * deltaTime;
-        if (step > 0 && player.HP < player.maxHP) {
-            const missing = Math.max(0, player.maxHP - player.HP);
-            const actualHeal = Math.min(missing, step);
-            player.HP += actualHeal;
+        let pendingText = effect.pendingText || 0;
+        let textTimer = (effect.textTimer || 0) + deltaTime;
+        pendingText += applyHealing({
+            gameState,
+            target: player,
+            amount: step,
+            recipientId: player.id,
+            emitText: false
+        });
+        if (textTimer >= 10 || remaining <= 0) {
+            emitCombatText(gameState, player.id, 'healing', pendingText, player);
+            pendingText = 0;
+            textTimer = 0;
         }
         if (remaining > 0) {
             nextEffects.push({
                 ...effect,
-                remaining
+                remaining,
+                pendingText,
+                textTimer
             });
         }
     }
@@ -248,7 +260,9 @@ function collectPlayerPickups(player, gameState, io) {
             player.pickupHealOverTimeEffects = player.pickupHealOverTimeEffects || [];
             player.pickupHealOverTimeEffects.push({
                 remaining: PICKUP_HEAL_DURATION,
-                healPerDeltaUnit
+                healPerDeltaUnit,
+                pendingText: 0,
+                textTimer: 0
             });
             if (io && player.id) {
                 io.to(player.id).emit('pickupCollected', { type: 'heal' });
@@ -332,7 +346,7 @@ function gameLoop(gameState, deltaTime, io) {
             continue;
         }
 
-        applyActiveHealOverTime(player, deltaTime);
+        applyActiveHealOverTime(player, deltaTime, gameState);
         if (player.burnEffects?.length) {
             const nextBurnEffects = [];
             for (const effect of player.burnEffects) {
@@ -341,12 +355,35 @@ function gameLoop(gameState, deltaTime, io) {
                 const burnDps = Math.max(0, Number(effect.damagePerSecond) || 0);
                 if (burnDps > 0) {
                     const burnDamage = burnDps * (deltaTime / 25);
-                    player.takeDamage(burnDamage, effect.sourceId || null);
+                    const burnSourceId = effect.sourceId || null;
+                    const burnAttacker = burnSourceId
+                        ? gameState.players.find((p) => p.id === burnSourceId)
+                        : null;
+                    const damageDealt = applyDamage({
+                        gameState,
+                        target: player,
+                        amount: burnDamage,
+                        sourceId: burnSourceId,
+                        attacker: burnAttacker,
+                        emitHitAudio: false,
+                        emitText: false,
+                        applyPassiveHealing: false,
+                        flashTarget: false
+                    });
+                    effect.pendingText = (effect.pendingText || 0) + damageDealt;
+                    effect.textTimer = (effect.textTimer || 0) + deltaTime;
+                    if ((effect.textTimer || 0) >= 10 || remaining <= 0) {
+                        emitCombatText(gameState, burnSourceId, 'damage', effect.pendingText || 0, player);
+                        effect.pendingText = 0;
+                        effect.textTimer = 0;
+                    }
                 }
                 nextBurnEffects.push({
                     timer: remaining,
                     sourceId: effect.sourceId || null,
-                    damagePerSecond: burnDps
+                    damagePerSecond: burnDps,
+                    pendingText: effect.pendingText || 0,
+                    textTimer: effect.textTimer || 0
                 });
             }
             player.burnEffects = nextBurnEffects;
@@ -358,8 +395,34 @@ function gameLoop(gameState, deltaTime, io) {
             for (const effect of player.reaverDotEffects) {
                 const remaining = Math.max(0, (effect.timer || 0) - deltaTime);
                 if (remaining <= 0) continue;
-                player.takeDamage(dotDamage, effect.sourceId || null);
-                nextEffects.push({ timer: remaining, sourceId: effect.sourceId || null });
+                const dotSourceId = effect.sourceId || null;
+                const dotAttacker = dotSourceId
+                    ? gameState.players.find((p) => p.id === dotSourceId)
+                    : null;
+                const damageDealt = applyDamage({
+                    gameState,
+                    target: player,
+                    amount: dotDamage,
+                    sourceId: dotSourceId,
+                    attacker: dotAttacker,
+                    emitHitAudio: false,
+                    emitText: false,
+                    applyPassiveHealing: false,
+                    flashTarget: false
+                });
+                effect.pendingText = (effect.pendingText || 0) + damageDealt;
+                effect.textTimer = (effect.textTimer || 0) + deltaTime;
+                if ((effect.textTimer || 0) >= 10 || remaining <= 0) {
+                    emitCombatText(gameState, dotSourceId, 'damage', effect.pendingText || 0, player);
+                    effect.pendingText = 0;
+                    effect.textTimer = 0;
+                }
+                nextEffects.push({
+                    timer: remaining,
+                    sourceId: effect.sourceId || null,
+                    pendingText: effect.pendingText || 0,
+                    textTimer: effect.textTimer || 0
+                });
             }
             player.reaverDotEffects = nextEffects;
         }
@@ -620,9 +683,14 @@ function gameLoop(gameState, deltaTime, io) {
                     continue;
                 }
 
-                const hpBeforeDamage = player.HP;
-                player.takeDamage(bullet.damage, hitter);
-                const damageDealt = Math.max(0, hpBeforeDamage - player.HP);
+                const damageDealt = applyDamage({
+                    gameState,
+                    target: player,
+                    amount: bullet.damage,
+                    sourceId: hitter,
+                    attacker: hitterPlayer,
+                    emitHitAudio: true
+                });
                 if (damageDealt > 0 && bullet.stunDuration > 0) {
                     player.stunnedTimer = Math.max(player.stunnedTimer || 0, bullet.stunDuration);
                 }
@@ -635,36 +703,13 @@ function gameLoop(gameState, deltaTime, io) {
                     player.burnEffects.push({
                         timer: bullet.burnDuration,
                         sourceId: hitter || null,
-                        damagePerSecond: bullet.burnDamagePerSecond
+                        damagePerSecond: bullet.burnDamagePerSecond,
+                        pendingText: 0,
+                        textTimer: 0
                     });
                 }
                 if (!bullet.piercePlayers) {
                     bullet.destroy(gameState);
-                }
-                if (damageDealt > 0 && hitter) {
-                    io.to(hitter).emit('hit');
-                    io.to(player.id).emit('gotHit');
-                    io.to(hitter).emit('combatText', {
-                        type: 'damage',
-                        amount: damageDealt,
-                        x: player.x,
-                        y: player.y - player.radius - 10
-                    });
-                }
-                const damageDealer = gameState.players.find((p) => p.id === hitter);
-                if (damageDealer?.passiveAbility) {
-                    const healedAmount = damageDealer.passiveAbility.onDamageDealt(damageDealer, damageDealt, player, gameState) || 0;
-                    if (healedAmount > 0) {
-                        io.to(hitter).emit('combatText', {
-                            type: 'healing',
-                            amount: healedAmount,
-                            x: damageDealer.x,
-                            y: damageDealer.y - damageDealer.radius - 10
-                        });
-                    }
-                }
-                if (damageDealt > 0) {
-                    player.flashingTimer = 1;
                 }
             }
 
@@ -675,7 +720,9 @@ function gameLoop(gameState, deltaTime, io) {
                 player.reaverDotEffects = player.reaverDotEffects || [];
                 player.reaverDotEffects.push({
                     timer: REAVER_DOT_DURATION,
-                    sourceId: hitter
+                    sourceId: hitter,
+                    pendingText: 0,
+                    textTimer: 0
                 });
             }
         }

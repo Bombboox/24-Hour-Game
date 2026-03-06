@@ -1,6 +1,7 @@
 const { Bullet } = require('./bullet');
 const { MAP_RADIUS } = require('./constants');
 const { circleRectCollision, circleRotatedRectCollision, hasRotation } = require('./collision');
+const { applyDamage } = require('./combat');
 
 class GrenadeProjectile {
     constructor(options = {}) {
@@ -181,29 +182,13 @@ class GrenadeProjectile {
 
             const falloff = 1 - (distance / this.explosionRadius);
             const damage = this.explosionDamage * Math.max(0.35, falloff);
-            const hpBeforeDamage = player.HP;
-            player.takeDamage(damage, this.ownerId);
-            const damageDealt = Math.max(0, hpBeforeDamage - player.HP);
-            if (damageDealt > 0 && io && this.ownerId) {
-                io.to(this.ownerId).emit('combatText', {
-                    type: 'damage',
-                    amount: damageDealt,
-                    x: player.x,
-                    y: player.y - player.radius - 10
-                });
-            }
-            if (owner?.passiveAbility) {
-                const healedAmount = owner.passiveAbility.onDamageDealt(owner, damageDealt, player, gameState) || 0;
-                if (healedAmount > 0 && io && this.ownerId) {
-                    io.to(this.ownerId).emit('combatText', {
-                        type: 'healing',
-                        amount: healedAmount,
-                        x: owner.x,
-                        y: owner.y - owner.radius - 10
-                    });
-                }
-            }
-            player.flashingTimer = 1;
+            applyDamage({
+                gameState,
+                target: player,
+                amount: damage,
+                sourceId: this.ownerId,
+                attacker: owner
+            });
         }
 
         const angleStep = (Math.PI * 2) / this.shrapnelCount;
@@ -365,36 +350,18 @@ class DemoExplosive {
             const damage = this.explosionDamage * falloff * selfMultiplier;
             const impulse = this.explosionForce * falloff;
 
-            const hpBeforeDamage = player.HP;
-            player.takeDamage(damage, this.ownerId);
-            const damageDealt = Math.max(0, hpBeforeDamage - player.HP);
-            player.flashingTimer = 1;
+            applyDamage({
+                gameState,
+                target: player,
+                amount: damage,
+                sourceId: this.ownerId,
+                attacker: owner
+            });
 
             player.forceVX = (player.forceVX || 0) + normalizedX * impulse;
             player.forceVY = (player.forceVY || 0) + normalizedY * impulse;
             if (player.passiveAbility && typeof player.passiveAbility.onForceApplied === 'function') {
                 player.passiveAbility.onForceApplied(player, impulse);
-            }
-
-            if (damageDealt > 0 && io && this.ownerId) {
-                io.to(this.ownerId).emit('combatText', {
-                    type: 'damage',
-                    amount: damageDealt,
-                    x: player.x,
-                    y: player.y - player.radius - 10
-                });
-            }
-
-            if (owner?.passiveAbility) {
-                const healedAmount = owner.passiveAbility.onDamageDealt(owner, damageDealt, player, gameState) || 0;
-                if (healedAmount > 0 && io && this.ownerId) {
-                    io.to(this.ownerId).emit('combatText', {
-                        type: 'healing',
-                        amount: healedAmount,
-                        x: owner.x,
-                        y: owner.y - owner.radius - 10
-                    });
-                }
             }
         }
 

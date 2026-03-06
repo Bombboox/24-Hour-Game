@@ -25,6 +25,7 @@ class SoundManager {
         createjs.Sound.registerSound("sounds/hover.mp3", "hover");
         createjs.Sound.registerSound("sounds/click.mp3", "click");
         createjs.Sound.registerSound("sounds/heal.mp3", "heal");
+        createjs.Sound.registerSound("sounds/heal2.mp3", "heal2");
         createjs.Sound.registerSound("sounds/coin.mp3", "coin");
         createjs.Sound.registerSound("sounds/chaching.mp3", "chaching");
         
