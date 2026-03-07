@@ -3533,6 +3533,7 @@ function draw(gameState) {
     
     const cameraX = thisPlayer.x - canvas.width / 2;
     const cameraY = thisPlayer.y - canvas.height / 2;
+    const localInvisibleRevealActive = isInvisiblePlayerRevealedToAnyOtherPlayer(thisPlayer, gameState.players);
     
     ctx.save();
     ctx.translate(-cameraX, -cameraY);
@@ -3565,7 +3566,7 @@ function draw(gameState) {
     }
     
     for (const player of gameState.players) {
-        drawPlayer(player, thisPlayer);
+        drawPlayer(player, thisPlayer, player.id === thisPlayer.id && localInvisibleRevealActive);
     }
     for (const player of gameState.players) {
         if (player.reaverBolts?.length) {
@@ -3810,10 +3811,27 @@ function getDistanceBetweenPlayers(playerA, playerB) {
     return Math.sqrt(dx * dx + dy * dy);
 }
 
+const INVISIBILITY_REVEAL_RADIUS = 160;
+
+function isInvisiblePlayerRevealedToViewer(player, viewer) {
+    if (!player?.invisible || !viewer || player.id === viewer.id) {
+        return false;
+    }
+
+    return getDistanceBetweenPlayers(player, viewer) <= INVISIBILITY_REVEAL_RADIUS;
+}
+
+function isInvisiblePlayerRevealedToAnyOtherPlayer(player, players) {
+    if (!player?.invisible || !Array.isArray(players)) {
+        return false;
+    }
+
+    return players.some((otherPlayer) => isInvisiblePlayerRevealedToViewer(player, otherPlayer));
+}
+
 function getPlayerOpacity(player, thisPlayer) {
     const MIN_VISIBLE_ALPHA = 0.35;
     const TRANSPARENT_ALPHA = 0.2;
-    const REVEAL_DISTANCE = 220;
 
     if (!player.invisible) {
         return 1;
@@ -3823,14 +3841,14 @@ function getPlayerOpacity(player, thisPlayer) {
         return MIN_VISIBLE_ALPHA;
     }
 
-    if (getDistanceBetweenPlayers(player, thisPlayer) <= REVEAL_DISTANCE) {
+    if (isInvisiblePlayerRevealedToViewer(player, thisPlayer)) {
         return TRANSPARENT_ALPHA;
     }
 
     return 0;
 }
 
-function drawPlayer(player, thisPlayer) {
+function drawPlayer(player, thisPlayer, isRevealedToAnyOtherPlayer = false) {
     if (player.isRespawning) {
         return;
     }
@@ -4010,6 +4028,29 @@ function drawPlayer(player, thisPlayer) {
             ctx.globalAlpha = 1;
         }
         drawReaverStacks(player);
+        ctx.restore();
+    }
+
+    if (player.id === thisPlayer.id && player.invisible) {
+        ctx.save();
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(176, 214, 232, 0.3)';
+        ctx.beginPath();
+        ctx.arc(0, 0, INVISIBILITY_REVEAL_RADIUS, 0, 2 * Math.PI);
+        ctx.stroke();
+
+        if (isRevealedToAnyOtherPlayer) {
+            ctx.rotate(-player.angle);
+            ctx.fillStyle = 'rgba(255, 239, 184, 0.9)';
+            ctx.strokeStyle = 'rgba(32, 24, 18, 0.7)';
+            ctx.lineWidth = 3;
+            ctx.font = 'bold 24px Georgia';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.strokeText('!', 0, -player.radius - 24);
+            ctx.fillText('!', 0, -player.radius - 24);
+        }
         ctx.restore();
     }
     
