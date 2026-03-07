@@ -390,7 +390,7 @@ class King extends Character {
         super({
             ...options,
             speed: options.speed || 4,
-            maxHP: options.maxHP || 225,
+            maxHP: options.maxHP || 250,
             damage: options.damage || 1.5,
             radius: options.radius || 25,
             image: options.image || kingImage,
