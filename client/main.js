@@ -3533,7 +3533,6 @@ function draw(gameState) {
     
     const cameraX = thisPlayer.x - canvas.width / 2;
     const cameraY = thisPlayer.y - canvas.height / 2;
-    const localInvisibleRevealActive = isInvisiblePlayerRevealedToAnyOtherPlayer(thisPlayer, gameState.players);
     
     ctx.save();
     ctx.translate(-cameraX, -cameraY);
@@ -3566,7 +3565,7 @@ function draw(gameState) {
     }
     
     for (const player of gameState.players) {
-        drawPlayer(player, thisPlayer, player.id === thisPlayer.id && localInvisibleRevealActive);
+        drawPlayer(player, thisPlayer);
     }
     for (const player of gameState.players) {
         if (player.reaverBolts?.length) {
@@ -4035,7 +4034,7 @@ function drawPlayer(player, thisPlayer, isRevealedToAnyOtherPlayer = false) {
         ctx.save();
         ctx.globalAlpha = 1;
         ctx.lineWidth = 2;
-        ctx.strokeStyle = 'rgba(176, 214, 232, 0.3)';
+        ctx.strokeStyle = 'rgba(44, 11, 11, 0.09)';
         ctx.beginPath();
         ctx.arc(0, 0, INVISIBILITY_REVEAL_RADIUS, 0, 2 * Math.PI);
         ctx.stroke();
