@@ -2419,14 +2419,25 @@ io.on('connection', (socket) => {
         if (roomName === FREE_FOR_ALL_ROOM) {
             const roomState = state.get(roomName);
             const player = roomState?.players?.find((candidate) => candidate.id === socket.id) || null;
-            if (player) {
-                await emitFreeForAllDepartureResult(socket, player);
+            try {
+                if (player) {
+                    await emitFreeForAllDepartureResult(socket, player);
+                }
+            } catch (error) {
+                logger.warn('Failed to finalize free for all departure', {
+                    error: error.message,
+                    roomName,
+                    socketId: socket.id
+                });
+            } finally {
+                cleanupPlayerFromRoom(socket.id);
+                cleanupSocketResources(socket.id);
             }
-            cleanupSocketResources(socket.id);
-            cleanupPlayerFromRoom(socket.id);
-            if (roomState) {
+
+            const updatedRoomState = state.get(roomName);
+            if (updatedRoomState) {
                 io.sockets.in(roomName).emit('playerLeft', {
-                    playerCount: roomState.players.length,
+                    playerCount: updatedRoomState.players.length,
                     playerId: socket.id
                 });
             }
@@ -2454,36 +2465,44 @@ io.on('connection', (socket) => {
             return true;
         }
 
-        if (roomState && roomState.gameMode === '1v1' && roomState.players.length >= 2 && !roomState.matchEnded) {
-            const winner = roomState.players.find((player) => player.id !== socket.id);
-            if (winner) {
+        try {
+            if (roomState && roomState.gameMode === '1v1' && roomState.players.length >= 2 && !roomState.matchEnded) {
+                const winner = roomState.players.find((player) => player.id !== socket.id);
+                if (winner) {
+                    roomState.matchEnded = true;
+                    roomState.matchWinnerId = winner.id;
+                    roomState.matchTargetKills = ONE_VS_ONE_KILL_TARGET;
+                    roomState.matchEndReason = 'forfeit';
+                    roomState.cacheReset = true;
+                    await finalizeOneVsOneMatch(roomName, {
+                        winnerId: winner.id,
+                        reason: 'forfeit'
+                    });
+                }
+            } else if (roomState && roomState.gameMode === '2v2' && !roomState.matchEnded) {
+                const leavingPlayer = roomState.players.find((player) => player.id === socket.id);
+                const leavingTeam = leavingPlayer?.team === 'blue' ? 'blue' : 'red';
+                const winnerTeam = leavingTeam === 'red' ? 'blue' : 'red';
                 roomState.matchEnded = true;
-                roomState.matchWinnerId = winner.id;
-                roomState.matchTargetKills = ONE_VS_ONE_KILL_TARGET;
+                roomState.matchWinnerTeam = winnerTeam;
                 roomState.matchEndReason = 'forfeit';
-                roomState.cacheReset = true;
-                await finalizeOneVsOneMatch(roomName, {
-                    winnerId: winner.id,
+                await finalizeTwoVsTwoMatch(roomName, {
+                    winnerTeam,
                     reason: 'forfeit'
                 });
+            } else if (roomState) {
+                io.sockets.in(roomName).emit('opponentLeft');
             }
-        } else if (roomState && roomState.gameMode === '2v2' && !roomState.matchEnded) {
-            const leavingPlayer = roomState.players.find((player) => player.id === socket.id);
-            const leavingTeam = leavingPlayer?.team === 'blue' ? 'blue' : 'red';
-            const winnerTeam = leavingTeam === 'red' ? 'blue' : 'red';
-            roomState.matchEnded = true;
-            roomState.matchWinnerTeam = winnerTeam;
-            roomState.matchEndReason = 'forfeit';
-            await finalizeTwoVsTwoMatch(roomName, {
-                winnerTeam,
-                reason: 'forfeit'
+        } catch (error) {
+            logger.warn('Failed to finalize room departure', {
+                error: error.message,
+                roomName,
+                socketId: socket.id
             });
-        } else if (roomState) {
-            io.sockets.in(roomName).emit('opponentLeft');
+        } finally {
+            cleanupSocketResources(socket.id);
+            cleanupRoom(roomName);
         }
-
-        cleanupSocketResources(socket.id);
-        cleanupRoom(roomName);
         logger.info(`Room ended due to player leaving: ${roomName}`);
         return true;
     };

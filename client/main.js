@@ -415,6 +415,16 @@ class WebSocketGameClient {
         }
         this.connect();
     }
+
+    close(code = 1000, reason) {
+        if (!this.ws) {
+            return;
+        }
+
+        if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+            this.ws.close(code, reason);
+        }
+    }
 }
 
 const socket = new WebSocketGameClient();
@@ -477,6 +487,7 @@ let netDebugStats = {
 };
 let renderLoopId = null;
 let mainInitialized = false;
+let pageExitCleanupSent = false;
 let localPredictionState = null;
 let localAimAngle = 0;
 const localInputState = {
@@ -1772,6 +1783,30 @@ function clearAmbienceStartRetry() {
     ambienceStartRetryTimer = null;
 }
 
+function isSearchingForMatch() {
+    return Boolean(searchingMenu) && searchingMenu.style.display === 'block';
+}
+
+function notifyServerOfPageExit() {
+    if (pageExitCleanupSent) {
+        return;
+    }
+    pageExitCleanupSent = true;
+
+    try {
+        if (socket.ws?.readyState === WebSocket.OPEN) {
+            if (gameActive) {
+                socket.emit('leaveMatch');
+            } else if (isSearchingForMatch()) {
+                socket.emit('cancelSearch');
+            }
+        }
+        socket.close(1000, 'page exit');
+    } catch (_error) {
+        // Ignore page exit cleanup failures.
+    }
+}
+
 function startMatchAmbience() {
     clearAmbienceStartRetry();
 
@@ -1847,6 +1882,14 @@ function main() {
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mousedown', handleMouseDown);
     document.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('pagehide', notifyServerOfPageExit);
+    window.addEventListener('beforeunload', notifyServerOfPageExit);
+    window.addEventListener('pageshow', () => {
+        pageExitCleanupSent = false;
+        if (socket.ws?.readyState === WebSocket.CLOSING || socket.ws?.readyState === WebSocket.CLOSED) {
+            socket.reconnect();
+        }
+    });
 
     ensureNetDebugOverlayElement();
     startRenderLoop();
