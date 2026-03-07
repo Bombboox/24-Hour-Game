@@ -376,7 +376,206 @@ class DemoExplosive {
     }
 }
 
+class WaffleDrone {
+    constructor(options = {}) {
+        this.id = options.id || `waffle_drone_${options.ownerId}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        this.kind = 'waffleDrone';
+        this.x = options.x || 0;
+        this.y = options.y || 0;
+        this.radius = options.radius || 14;
+        this.ownerId = options.ownerId || null;
+        this.ownerTeam = options.ownerTeam || null;
+        this.angle = options.angle || 0;
+        this.spin = this.angle;
+        this.velocityX = options.velocityX || 0;
+        this.velocityY = options.velocityY || 0;
+        this.speed = options.speed || Math.sqrt((this.velocityX ** 2) + (this.velocityY ** 2)) || 17;
+        this.active = true;
+        this.range = options.range || 360;
+        this.fireCooldown = options.fireCooldown || 14;
+        this.currentCooldown = 0;
+        this.bulletSpeed = options.bulletSpeed || 18;
+        this.bulletDamage = options.bulletDamage || 8;
+        this.bulletRadius = options.bulletRadius || 3;
+        this.explosionRadius = options.explosionRadius || 95;
+        this.explosionDamage = options.explosionDamage || 18;
+        this.maxLifetime = options.maxLifetime || 225;
+        this.age = 0;
+    }
+
+    isFriendlyObstacle(obstacle, owner = null) {
+        if (!obstacle) return false;
+        if (obstacle.ownerId && obstacle.ownerId === this.ownerId) return true;
+        if (owner?.team && obstacle.ownerTeam && owner.team === obstacle.ownerTeam) return true;
+        return false;
+    }
+
+    collidesWithObstacle(obstacles = [], owner = null) {
+        for (const obstacle of obstacles) {
+            if (this.isFriendlyObstacle(obstacle, owner)) {
+                continue;
+            }
+            if (hasRotation(obstacle)) {
+                if (circleRotatedRectCollision(this.x, this.y, this.radius, obstacle)) {
+                    return obstacle;
+                }
+            } else if (circleRectCollision(this.x, this.y, this.radius, obstacle)) {
+                return obstacle;
+            }
+        }
+        return null;
+    }
+
+    findNearestTarget(players = []) {
+        const owner = players.find((player) => player.id === this.ownerId);
+        const ownerTeam = this.ownerTeam || owner?.team || null;
+        if (!this.ownerTeam && ownerTeam) {
+            this.ownerTeam = ownerTeam;
+        }
+
+        let nearest = null;
+        let nearestDistance = Infinity;
+        for (const player of players) {
+            if (!player || player.id === this.ownerId || player.HP <= 0 || player.isRespawning) continue;
+            if (ownerTeam && player.team && ownerTeam === player.team) continue;
+            const dx = player.x - this.x;
+            const dy = player.y - this.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance <= this.range && distance < nearestDistance) {
+                nearestDistance = distance;
+                nearest = player;
+            }
+        }
+        return nearest;
+    }
+
+    collidesWithEnemyPlayer(players = []) {
+        const owner = players.find((player) => player.id === this.ownerId);
+        for (const player of players) {
+            if (!player || player.id === this.ownerId || player.HP <= 0 || player.isRespawning) continue;
+            if (owner?.team && player.team && owner.team === player.team) continue;
+            const dx = player.x - this.x;
+            const dy = player.y - this.y;
+            const radiusSum = (player.radius || 0) + this.radius;
+            if (dx * dx + dy * dy <= radiusSum * radiusSum) {
+                return player;
+            }
+        }
+        return null;
+    }
+
+    fireAtTarget(target, gameState) {
+        if (!target || !gameState?.bullets) return;
+        const dx = target.x - this.x;
+        const dy = target.y - this.y;
+        this.angle = Math.atan2(dy, dx);
+        this.spin = this.angle;
+        gameState.bullets.push(new Bullet({
+            x: this.x + Math.cos(this.angle) * (this.radius + 5),
+            y: this.y + Math.sin(this.angle) * (this.radius + 5),
+            speed: this.bulletSpeed,
+            angle: this.angle,
+            damage: this.bulletDamage,
+            radius: this.bulletRadius,
+            color: '#ffd56c',
+            playerId: this.ownerId
+        }));
+        this.currentCooldown = this.fireCooldown;
+    }
+
+    update(deltaTime, gameState, io = null) {
+        if (!this.active) return;
+        const owner = gameState.players.find((player) => player.id === this.ownerId);
+        this.age += deltaTime;
+        if (this.age >= this.maxLifetime) {
+            this.explode(gameState, io);
+            return;
+        }
+
+        const velocityMagnitude = Math.sqrt((this.velocityX ** 2) + (this.velocityY ** 2));
+        if (velocityMagnitude > 0) {
+            this.velocityX = (this.velocityX / velocityMagnitude) * this.speed;
+            this.velocityY = (this.velocityY / velocityMagnitude) * this.speed;
+        } else {
+            this.velocityX = Math.cos(this.spin) * this.speed;
+            this.velocityY = Math.sin(this.spin) * this.speed;
+        }
+
+        this.x += this.velocityX * deltaTime;
+        this.y += this.velocityY * deltaTime;
+
+        const distanceFromCenter = Math.sqrt(this.x * this.x + this.y * this.y);
+        if (distanceFromCenter + this.radius >= MAP_RADIUS) {
+            this.explode(gameState, io);
+            return;
+        }
+
+        const obstacleHit = this.collidesWithObstacle(gameState.obstacles, owner);
+        if (obstacleHit) {
+            if (obstacleHit.health) {
+                obstacleHit.takeDamage(20, gameState);
+            }
+            this.explode(gameState, io);
+            return;
+        }
+
+        if (this.collidesWithEnemyPlayer(gameState.players)) {
+            this.explode(gameState, io);
+            return;
+        }
+
+        if (this.currentCooldown > 0) {
+            this.currentCooldown = Math.max(0, this.currentCooldown - deltaTime);
+        }
+
+        const target = this.findNearestTarget(gameState.players);
+        if (!target) {
+            return;
+        }
+
+        this.angle = Math.atan2(target.y - this.y, target.x - this.x);
+        this.spin = this.angle;
+        if (this.currentCooldown <= 0) {
+            this.fireAtTarget(target, gameState);
+        }
+    }
+
+    explode(gameState, io = null) {
+        if (!this.active) return;
+        this.active = false;
+        const owner = gameState.players.find((player) => player.id === this.ownerId);
+
+        for (const player of gameState.players || []) {
+            if (!player || player.id === this.ownerId || player.HP <= 0 || player.isRespawning) continue;
+            if (owner?.team && player.team && owner.team === player.team) continue;
+            const dx = player.x - this.x;
+            const dy = player.y - this.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance > this.explosionRadius) continue;
+
+            const falloff = Math.max(0.35, 1 - (distance / this.explosionRadius));
+            applyDamage({
+                gameState,
+                target: player,
+                amount: this.explosionDamage * falloff,
+                sourceId: this.ownerId,
+                attacker: owner
+            });
+        }
+
+        this.destroy(gameState);
+    }
+
+    destroy(gameState) {
+        const index = gameState.grenades.indexOf(this);
+        if (index > -1) {
+            gameState.grenades.splice(index, 1);
+        }
+    }
+}
+
 module.exports = {
     GrenadeProjectile,
-    DemoExplosive
+    DemoExplosive,
+    WaffleDrone
 };

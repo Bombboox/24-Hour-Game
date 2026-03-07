@@ -1,5 +1,5 @@
 const { createCanvas, loadImage, Image } = require('canvas');
-const { Dash, Enlarge, Berserk, NinjaMomentum, KingGoldenDomain, BerserkerBloodrush, DemomanSatchel, DemomanMomentum, ReaverArcPassive, ReaverShards } = require('./specialAbilities');
+const { Dash, Enlarge, Berserk, NinjaMomentum, KingGoldenDomain, BerserkerBloodrush, DemomanSatchel, DemomanMomentum, ReaverArcPassive, ReaverShards, WaffleDroneAbility, WaffleSiliconeSkin } = require('./specialAbilities');
 const { MAP_RADIUS } = require('./constants');
 const { circleRectCollision, circleObstacleCollision, resolveCircleObstacleOverlaps } = require('./collision');
 
@@ -76,13 +76,20 @@ class Character {
         this.invulnerableTimer = 0;
         this.coinsCollected = 0;
         this.pickupHealOverTimeEffects = [];
+        this.shieldHP = options.shieldHP ?? 0;
+        this.maxShieldHP = options.maxShieldHP ?? 0;
+        this.shieldVisible = options.shieldVisible ?? false;
     }
     
-    takeDamage(damage, sourceId = null) {
+    takeDamage(damage, sourceId = null, gameState = null) {
         if (this.isRespawning || (this.invulnerableTimer || 0) > 0) {
             return;
         }
-        this.HP -= damage * this.defense;
+        let adjustedDamage = damage;
+        if (this.passiveAbility && typeof this.passiveAbility.onBeforeTakeDamage === 'function') {
+            adjustedDamage = this.passiveAbility.onBeforeTakeDamage(this, adjustedDamage, sourceId, gameState);
+        }
+        this.HP -= adjustedDamage * this.defense;
         if (sourceId) {
             this.lastDamagedBy = sourceId;
         }
@@ -286,7 +293,10 @@ class Character {
         }
         if (gameState?.grenades) {
             gameState.grenades = gameState.grenades.filter(
-                (grenade) => !(grenade.kind === 'demoExplosive' && grenade.ownerId === this.id)
+                (grenade) => !(
+                    (grenade.kind === 'demoExplosive' || grenade.kind === 'waffleDrone') &&
+                    grenade.ownerId === this.id
+                )
             );
         }
         if(this.sharedAbility) {
@@ -488,11 +498,32 @@ class Reaver extends Character {
     }
 }
 
+class Waffle extends Character {
+    constructor(options = {}) {
+        const waffleImage = new Image();
+        waffleImage.src = 'sprites/waffle.png';
+
+        super({
+            ...options,
+            speed: options.speed || 5.4,
+            maxHP: options.maxHP || 120,
+            damage: options.damage || 1.0,
+            radius: options.radius || 22,
+            image: options.image || waffleImage,
+            name: options.name || 'Waffle'
+        });
+        this.specialAbility = new WaffleDroneAbility();
+        this.passiveAbility = new WaffleSiliconeSkin();
+        this.passiveAbility.onRespawn(this);
+    }
+}
+
 module.exports = {
     Character,
     Ninja,
     King,
     Berserker,
     Demoman,
-    Reaver
+    Reaver,
+    Waffle
 }

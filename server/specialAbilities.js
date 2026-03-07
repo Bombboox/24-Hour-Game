@@ -1,5 +1,5 @@
 const { Shield, AutoTurret } = require('./obstacle');
-const { GrenadeProjectile, DemoExplosive } = require('./grenade');
+const { GrenadeProjectile, DemoExplosive, WaffleDrone } = require('./grenade');
 const { Bullet } = require('./bullet');
 const { emitCombatText, applyHealing, applyDamage } = require('./combat');
 
@@ -118,6 +118,103 @@ class PassiveAbility {
 
     onEnd(character, gameState) {
         // override as needed
+    }
+
+    onBeforeTakeDamage(character, amount, sourceId, gameState) {
+        return amount;
+    }
+}
+
+class WaffleSiliconeSkin extends PassiveAbility {
+    constructor(options = {}) {
+        super({
+            name: 'Sillicone Skin',
+            key: 'Passive',
+            cooldown: 237.5,
+            duration: 37.5,
+            description: 'Gain a 50 HP shield. After 8s without taking damage, it replenishes over 1.5s.',
+            ...options
+        });
+        this.maxShield = options.maxShield ?? 50;
+        this.rechargeDelay = options.rechargeDelay ?? 200;
+        this.rechargeDuration = options.rechargeDuration ?? 37.5;
+        this.rechargePerDelta = this.maxShield / this.rechargeDuration;
+        this.timeSinceDamage = 0;
+    }
+
+    syncCharacterState(character) {
+        character.maxShieldHP = this.maxShield;
+        character.shieldHP = Math.max(0, Math.min(this.maxShield, character.shieldHP ?? this.maxShield));
+        character.shieldVisible = character.shieldHP > 0;
+    }
+
+    onBeforeTakeDamage(character, amount) {
+        this.syncCharacterState(character);
+        this.timeSinceDamage = 0;
+        this.currentCooldown = this.rechargeDelay;
+        this.currentDuration = 0;
+        this.isActive = false;
+
+        if (character.shieldHP <= 0) {
+            character.shieldVisible = false;
+            return amount;
+        }
+
+        const blocked = Math.min(character.shieldHP, amount);
+        character.shieldHP -= blocked;
+        character.shieldVisible = character.shieldHP > 0;
+        return Math.max(0, amount - blocked);
+    }
+
+    onUpdate(deltaTime, character) {
+        this.syncCharacterState(character);
+
+        if (character.shieldHP >= this.maxShield) {
+            character.shieldHP = this.maxShield;
+            character.shieldVisible = true;
+            this.isActive = false;
+            this.currentDuration = 0;
+            this.currentCooldown = 0;
+            this.timeSinceDamage = this.rechargeDelay;
+            return;
+        }
+
+        this.timeSinceDamage = Math.min(this.rechargeDelay, this.timeSinceDamage + deltaTime);
+        this.currentCooldown = Math.max(0, this.rechargeDelay - this.timeSinceDamage);
+
+        if (this.timeSinceDamage < this.rechargeDelay) {
+            this.isActive = false;
+            this.currentDuration = 0;
+            character.shieldVisible = character.shieldHP > 0;
+            return;
+        }
+
+        if (!this.isActive) {
+            this.isActive = true;
+            this.currentDuration = this.rechargeDuration;
+        }
+
+        character.shieldHP = Math.min(this.maxShield, character.shieldHP + this.rechargePerDelta * deltaTime);
+        character.shieldVisible = character.shieldHP > 0;
+        this.currentDuration = Math.max(0, this.rechargeDuration * (1 - (character.shieldHP / this.maxShield)));
+
+        if (character.shieldHP >= this.maxShield) {
+            character.shieldHP = this.maxShield;
+            character.shieldVisible = true;
+            this.isActive = false;
+            this.currentDuration = 0;
+            this.currentCooldown = 0;
+        }
+    }
+
+    onRespawn(character) {
+        character.shieldHP = this.maxShield;
+        character.maxShieldHP = this.maxShield;
+        character.shieldVisible = true;
+        this.timeSinceDamage = this.rechargeDelay;
+        this.currentCooldown = 0;
+        this.currentDuration = 0;
+        this.isActive = false;
     }
 }
 
@@ -894,6 +991,69 @@ class HealingCircle extends SpecialAbility {
     }
 }
 
+class WaffleDroneAbility extends SpecialAbility {
+    constructor(options = {}) {
+        super({
+            name: 'Waffle Drone',
+            cooldown: 110,
+            duration: 0,
+            ...options
+        });
+        this.maxCharges = options.maxCharges || 2;
+        this.charges = this.maxCharges;
+        this.chargeRegenInterval = options.chargeRegenInterval || 110;
+        this.chargeRegenTimer = 0;
+        this.isChargeBased = true;
+        this.holdToFire = false;
+        this.launchSpeed = options.launchSpeed || 8;
+    }
+
+    initiate(character, gameState) {
+        if (this.charges <= 0 || !gameState?.grenades) return false;
+
+        this.charges -= 1;
+        if (this.charges < this.maxCharges && this.chargeRegenTimer <= 0) {
+            this.chargeRegenTimer = 0.01;
+        }
+
+        const spawnOffset = character.radius + 18;
+        gameState.grenades.push(new WaffleDrone({
+            x: character.x + Math.cos(character.angle) * spawnOffset,
+            y: character.y + Math.sin(character.angle) * spawnOffset,
+            angle: character.angle,
+            ownerId: character.id,
+            ownerTeam: character.team || null,
+            velocityX: Math.cos(character.angle) * this.launchSpeed,
+            velocityY: Math.sin(character.angle) * this.launchSpeed
+        }));
+        return true;
+    }
+
+    update(deltaTime) {
+        if (this.charges >= this.maxCharges) {
+            this.chargeRegenTimer = 0;
+            this.currentCooldown = 0;
+            return;
+        }
+
+        this.chargeRegenTimer += deltaTime;
+        this.currentCooldown = Math.max(0, this.chargeRegenInterval - this.chargeRegenTimer);
+        while (this.chargeRegenTimer >= this.chargeRegenInterval && this.charges < this.maxCharges) {
+            this.chargeRegenTimer -= this.chargeRegenInterval;
+            this.charges += 1;
+            this.currentCooldown = this.charges >= this.maxCharges
+                ? 0
+                : Math.max(0, this.chargeRegenInterval - this.chargeRegenTimer);
+        }
+    }
+
+    onRespawn() {
+        this.charges = this.maxCharges;
+        this.chargeRegenTimer = 0;
+        this.currentCooldown = 0;
+    }
+}
+
 class Invisibility extends SpecialAbility {
     constructor(options = {}) {
         super({
@@ -925,6 +1085,8 @@ module.exports = {
     DemomanSatchel,
     ReaverArcPassive,
     ReaverShards,
+    WaffleDroneAbility,
+    WaffleSiliconeSkin,
     Dash,
     Enlarge,
     Berserk,

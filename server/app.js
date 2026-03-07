@@ -6,7 +6,7 @@ const uWS = require('uWebSockets.js');
 const msgpack = require('msgpack-lite');
 const { Pool } = require('pg');
 const { createGameState, gameLoop, generateNewMap, TWO_VS_TWO_TEAM_LIVES } = require('./game');
-const { Berserker, Ninja, King, Demoman, Reaver } = require('./character');
+const { Berserker, Ninja, King, Demoman, Reaver, Waffle } = require('./character');
 const { M4, Sniper, Pistol, Shotgun, LaserGun, Taser, RocketLauncher, BubbleLauncher, Flamethrower } = require('./weapon');
 const { Grenade, Invisibility, ShieldBarrier, TurretAbility, HealingCircle } = require('./specialAbilities');
 const { MAP_RADIUS, FRAME_RATE } = require('./constants');
@@ -149,7 +149,8 @@ const CHARACTER_CLASSES = {
     king: King,
     berserker: Berserker,
     demoman: Demoman,
-    reaver: Reaver
+    reaver: Reaver,
+    waffle: Waffle
 };
 
 const WEAPON_CLASSES = {

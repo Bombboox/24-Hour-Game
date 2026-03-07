@@ -19,6 +19,7 @@ const menuLink = document.querySelector(".menu-link");
 const gameScreen = document.getElementById("gameScreen");
 const healthBar = document.getElementById("healthBar");
 const healthFill = document.getElementById("healthFill");
+const shieldFill = document.getElementById("shieldFill");
 const healthText = document.getElementById("healthText");
 const ammoDisplay = document.getElementById("ammoDisplay");
 const weaponName = document.getElementById("weaponName");
@@ -83,7 +84,7 @@ const GRID_MINOR_SIZE = 35;
 const GRID_MAJOR_EVERY = 5;
 const GRID_MINOR_COLOR = "rgba(255, 255, 255, 0.23)";
 const GRID_MAJOR_COLOR = "rgba(255, 255, 255, 0.21)";
-const MENU_BACKDROP_SPRITES = ["King", "Ninja", "Berserker", "Demoman", "Reaver"];
+const MENU_BACKDROP_SPRITES = ["King", "Ninja", "Berserker", "Demoman", "Reaver", "Waffle"];
 const MENU_BACKDROP_ACTOR_COUNT = 8;
 const MENU_BACKDROP_FPS = 24;
 const MODE_STATUS_REFRESH_MS = 5000;
@@ -110,12 +111,14 @@ const playerImages = {
     Berserker: new Image(),
     Demoman: new Image(),
     Reaver: new Image(),
+    Waffle: new Image(),
     Grenade: new Image(),
     Explosive: new Image(),
     ReaverShard: new Image(),
     Missile: new Image(),
     TurretBase: new Image(),
     TurretHead: new Image(),
+    WaffleDrone: new Image(),
 }
 const obstacleImages = {
     shield: new Image(),
@@ -126,12 +129,14 @@ playerImages.Ninja.src = 'sprites/ninja.png';
 playerImages.Berserker.src = 'sprites/berserker.png';
 playerImages.Demoman.src = 'sprites/demo.png';
 playerImages.Reaver.src = 'sprites/reaver.png';
+playerImages.Waffle.src = 'sprites/waffle.png';
 playerImages.Grenade.src = 'sprites/grenade.png';
 playerImages.Explosive.src = 'sprites/explosive.png';
 playerImages.ReaverShard.src = 'sprites/reaver_shard.png';
 playerImages.Missile.src = 'sprites/missle.png';
 playerImages.TurretBase.src = 'sprites/turret_base.png';
 playerImages.TurretHead.src = 'sprites/turret_head.png';
+playerImages.WaffleDrone.src = 'sprites/waffle_drone.png';
 obstacleImages.shield.src = 'sprites/shield.png';
 
 const CHARACTER_LOADOUT_INFO = Object.freeze({
@@ -188,6 +193,17 @@ const CHARACTER_LOADOUT_INFO = Object.freeze({
             { label: 'HP', value: '125' },
             { label: 'Speed', value: '5.8' },
             { label: 'Damage', value: 'x1.0' }
+        ]
+    },
+    waffle: {
+        title: 'Waffle',
+        subtitle: 'Character',
+        description: 'Mid-range controller with a deployable drone and a regenerating shield.',
+        preview: { type: 'playerImage', key: 'Waffle' },
+        stats: [
+            { label: 'HP', value: '120' },
+            { label: 'Speed', value: '5.4' },
+            { label: 'Shield', value: '50' }
         ]
     }
 });
@@ -459,7 +475,8 @@ const FALLBACK_MOVE_SPEED_BY_NAME = Object.freeze({
     King: 3,
     Berserker: 6,
     Demoman: 5.5,
-    Reaver: 5.8
+    Reaver: 5.8,
+    Waffle: 5.4
 });
 const NET_DEBUG_OVERLAY_DEFAULT = false;
 const NET_DEBUG_TOGGLE_KEY = 'l';
@@ -573,7 +590,7 @@ const mobileControlState = {
 };
 
 let playerSettings = loadCharacterSettings();
-const VALID_CHARACTERS = ['berserker', 'ninja', 'king', 'demoman', 'reaver'];
+const VALID_CHARACTERS = ['berserker', 'ninja', 'king', 'demoman', 'reaver', 'waffle'];
 const VALID_WEAPONS = ['m4', 'pistol', 'shotgun', 'sniper', 'laser', 'taser', 'rocket', 'bubble', 'flamethrower'];
 const VALID_SHARED_ABILITIES = ['grenade', 'invisibility', 'shield', 'turret', 'healingcircle'];
 const SHOP_WEAPONS = Object.freeze({
@@ -3329,7 +3346,11 @@ function applyDeltaToGameState(delta) {
     if (Array.isArray(delta.removedGrenades)) {
         for (const grenadeId of delta.removedGrenades) {
             const removedGrenade = clientGameStateCache.grenades.get(grenadeId);
-            if (removedGrenade?.kind === 'demoExplosive' || removedGrenade?.kind === 'grenade') {
+            if (
+                removedGrenade?.kind === 'demoExplosive' ||
+                removedGrenade?.kind === 'grenade' ||
+                removedGrenade?.kind === 'waffleDrone'
+            ) {
                 spawnExplosiveEffect(removedGrenade.x, removedGrenade.y);
                 soundManager.play('explosion', 0.3);
             }
@@ -3401,7 +3422,14 @@ function draw(gameState) {
     const healthRatio = thisPlayer.maxHP > 0 ? (thisPlayer.HP / thisPlayer.maxHP) : 0;
     const overhealed = thisPlayer.HP > thisPlayer.maxHP;
     const clampedPercent = Math.max(0, Math.min(100, healthRatio * 100));
+    const shieldRatio = thisPlayer.passiveAbility?.maxShieldHP > 0
+        ? (thisPlayer.passiveAbility.shieldHP / thisPlayer.passiveAbility.maxShieldHP)
+        : 0;
     healthFill.style.width = `${clampedPercent}%`;
+    if (shieldFill) {
+        shieldFill.style.width = `${Math.max(0, Math.min(100, shieldRatio * 100))}%`;
+        shieldFill.style.opacity = shieldRatio > 0 ? '1' : '0';
+    }
     healthText.textContent = `${Math.round(thisPlayer.HP)}/${Math.round(thisPlayer.maxHP)}`;
     if (healthBar) {
         healthBar.classList.toggle('overhealed', overhealed);
@@ -3907,6 +3935,24 @@ function drawPlayer(player, thisPlayer, isRevealedToAnyOtherPlayer = false) {
             ctx.restore();
         }
 
+        if (player.name === 'Waffle' && player.passiveAbility?.shieldVisible) {
+            const pulse = 1 + Math.sin(Date.now() / 150) * 0.06;
+            const auraRadius = player.radius + 8 + pulse * 4;
+            ctx.save();
+            ctx.globalAlpha = 0.2;
+            ctx.fillStyle = '#d7d9de';
+            ctx.beginPath();
+            ctx.arc(0, 0, auraRadius, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.globalAlpha = 0.55;
+            ctx.strokeStyle = '#f3f5f8';
+            ctx.lineWidth = 2.4;
+            ctx.beginPath();
+            ctx.arc(0, 0, auraRadius + 2, 0, 2 * Math.PI);
+            ctx.stroke();
+            ctx.restore();
+        }
+
         ctx.drawImage(playerImages[player.name], -player.radius, -player.radius, player.radius * 2, player.radius * 2);
     } else {
         ctx.beginPath();
@@ -4326,7 +4372,11 @@ function drawLaserBeam(beam) {
 }
 
 function drawGrenade(grenade, thisPlayer) {
-    const GRENADE_SIZE = grenade.kind === 'demoExplosive' ? 19 : 48;
+    const GRENADE_SIZE = grenade.kind === 'demoExplosive'
+        ? 19
+        : grenade.kind === 'waffleDrone'
+            ? 30
+            : 48;
 
     if (
         grenade.kind === 'demoExplosive' &&
@@ -4339,17 +4389,29 @@ function drawGrenade(grenade, thisPlayer) {
 
     ctx.save();
     ctx.translate(grenade.x, grenade.y);
-    ctx.rotate(grenade.spin || 0);
+    ctx.rotate((grenade.kind === 'waffleDrone' ? grenade.angle : grenade.spin) || 0);
 
-    const sprite = grenade.kind === 'demoExplosive' ? playerImages.Explosive : playerImages.Grenade;
+    const sprite = grenade.kind === 'demoExplosive'
+        ? playerImages.Explosive
+        : grenade.kind === 'waffleDrone'
+            ? playerImages.WaffleDrone
+            : playerImages.Grenade;
     if (sprite.complete) {
         ctx.drawImage(sprite, -GRENADE_SIZE / 2, -GRENADE_SIZE / 2, GRENADE_SIZE, GRENADE_SIZE);
     } else {
         ctx.beginPath();
         ctx.arc(0, 0, grenade.radius || 20, 0, 2 * Math.PI);
-        ctx.fillStyle = grenade.kind === 'demoExplosive' ? '#ff7f5f' : '#75ff8f';
+        ctx.fillStyle = grenade.kind === 'demoExplosive'
+            ? '#ff7f5f'
+            : grenade.kind === 'waffleDrone'
+                ? '#d8c18b'
+                : '#75ff8f';
         ctx.fill();
-        ctx.strokeStyle = grenade.kind === 'demoExplosive' ? '#8f3d2c' : '#2c8f44';
+        ctx.strokeStyle = grenade.kind === 'demoExplosive'
+            ? '#8f3d2c'
+            : grenade.kind === 'waffleDrone'
+                ? '#81725a'
+                : '#2c8f44';
         ctx.stroke();
     }
 

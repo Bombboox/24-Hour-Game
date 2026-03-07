@@ -75,7 +75,7 @@ function applyDamage({
     }
 
     const hpBefore = target.HP;
-    target.takeDamage(amount, sourceId);
+    target.takeDamage(amount, sourceId, gameState);
     const damageDealt = Math.max(0, hpBefore - target.HP);
 
     if (damageDealt <= 0) {

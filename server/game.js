@@ -739,6 +739,13 @@ function gameLoop(gameState, deltaTime, io) {
             const opponentPlayer = gameState.gameMode === '1v1'
                 ? gameState.players.find((p) => p.id !== player.id)
                 : null;
+            gameState.grenades = (gameState.grenades || []).filter((grenade) => {
+                return !(
+                    grenade &&
+                    grenade.ownerId === player.id &&
+                    (grenade.kind === 'demoExplosive' || grenade.kind === 'waffleDrone')
+                );
+            });
 
             if (gameState.gameMode === '2v2') {
                 const victimTeam = player.team === 'blue' ? 'blue' : 'red';

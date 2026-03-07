@@ -104,7 +104,10 @@ class GameStateCache {
                     currentCooldown: Math.round((player.passiveAbility.currentCooldown || 0) * 100) / 100,
                     cooldown: player.passiveAbility.cooldown || 0,
                     isActive: player.passiveAbility.isActive || false,
-                    currentDuration: Math.round((player.passiveAbility.currentDuration || 0) * 100) / 100
+                    currentDuration: Math.round((player.passiveAbility.currentDuration || 0) * 100) / 100,
+                    shieldHP: Math.round((player.shieldHP || 0) * 100) / 100,
+                    maxShieldHP: Math.round((player.maxShieldHP || 0) * 100) / 100,
+                    shieldVisible: player.shieldVisible || false
                 } : null
             })),
             bullets: gameState.bullets.map(bullet => ({
@@ -123,6 +126,7 @@ class GameStateCache {
                 x: Math.round(grenade.x * 100) / 100,
                 y: Math.round(grenade.y * 100) / 100,
                 radius: grenade.radius,
+                angle: Math.round((grenade.angle || 0) * 1000) / 1000,
                 spin: Math.round(grenade.spin * 1000) / 1000,
                 active: grenade.active,
                 kind: grenade.kind || 'grenade',
@@ -320,10 +324,13 @@ class GameStateCache {
                  current.sharedAbility.effectRadius !== previous.sharedAbility.effectRadius)) ||
                (current.sharedAbility && !previous.sharedAbility) ||
                (!current.sharedAbility && previous.sharedAbility) ||
-               (current.passiveAbility && previous.passiveAbility &&
+                (current.passiveAbility && previous.passiveAbility &&
                 (current.passiveAbility.currentCooldown !== previous.passiveAbility.currentCooldown ||
                  current.passiveAbility.isActive !== previous.passiveAbility.isActive ||
-                 current.passiveAbility.currentDuration !== previous.passiveAbility.currentDuration)) ||
+                 current.passiveAbility.currentDuration !== previous.passiveAbility.currentDuration ||
+                 current.passiveAbility.shieldHP !== previous.passiveAbility.shieldHP ||
+                 current.passiveAbility.maxShieldHP !== previous.passiveAbility.maxShieldHP ||
+                 current.passiveAbility.shieldVisible !== previous.passiveAbility.shieldVisible)) ||
                (current.passiveAbility && !previous.passiveAbility) ||
                (!current.passiveAbility && previous.passiveAbility) ||
                current.invisible !== previous.invisible ||
@@ -341,6 +348,7 @@ class GameStateCache {
     hasGrenadeChanged(current, previous) {
         return current.x !== previous.x ||
                current.y !== previous.y ||
+               current.angle !== previous.angle ||
                current.spin !== previous.spin ||
                current.active !== previous.active ||
                current.kind !== previous.kind ||
