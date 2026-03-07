@@ -356,7 +356,7 @@ class Ninja extends Character {
             image: options.image || ninjaImage,
             name: options.name || 'Ninja',
         });
-        this.specialAbility = new Dash({
+        this.specialAbility = new Dash({    
             character: this
         });
         this.passiveAbility = new NinjaMomentum();
@@ -389,8 +389,8 @@ class King extends Character {
         
         super({
             ...options,
-            speed: options.speed || 4.5,
-            maxHP: options.maxHP || 225,
+            speed: options.speed || 4,
+            maxHP: options.maxHP || 200,
             damage: options.damage || 1.5,
             radius: options.radius || 25,
             image: options.image || kingImage,
