@@ -306,9 +306,9 @@ class KingGoldenDomain extends PassiveAbility {
             ...options
         });
         this.isToggledOn = false;
-        this.pulseInterval = 75;
+        this.pulseInterval = 50;
         this.pulseTimer = this.pulseInterval;
-        this.auraRadius = 260;
+        this.auraRadius = 300;
         this.slowDuration = 125;
         this.slowMultiplier = 0.70;
         this.visualPulseDuration = 20;
@@ -318,7 +318,7 @@ class KingGoldenDomain extends PassiveAbility {
         this.isToggledOn = !this.isToggledOn;
         this.isActive = this.isToggledOn;
         if (this.isToggledOn) {
-            this.pulseTimer = 0;
+            this.pulseTimer = this.pulseInterval / 2;
         }
         return this.isToggledOn;
     }
@@ -692,17 +692,21 @@ class Enlarge extends SpecialAbility {
         this.originalDefense = null;
         this.radiusMultiplier = 1.4;
         this.healthMultiplier = 1.5;
+        this.speedMultiplier = 1.4;
     }
 
     onStart(character, gameState) {
         this.originalRadius = character.radius;
         this.originalMaxHP = character.maxHP;
+        this.originalSpeed = character.speed;
         this.originalDefense = character.defense ?? 1;
+
         const hpBefore = character.HP;
 
         character.radius = this.originalRadius * this.radiusMultiplier;
         character.maxHP = this.originalMaxHP * this.healthMultiplier;
         character.HP = Math.min(character.HP * 1.5 + 100, character.maxHP);
+        character.speed = this.originalSpeed * this.speedMultiplier;
         const healedAmount = Math.max(0, character.HP - hpBefore);
         emitCombatText(gameState, character.id, 'healing', healedAmount, character);
         character.enlarged = true;
@@ -713,6 +717,7 @@ class Enlarge extends SpecialAbility {
         character.radius = this.originalRadius;
         character.maxHP = this.originalMaxHP;
         character.HP = Math.min(character.HP, character.maxHP);
+        character.speed = this.originalSpeed;
         character.enlarged = false;
         character.defense = this.originalDefense;
     }

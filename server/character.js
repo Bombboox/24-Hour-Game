@@ -389,8 +389,8 @@ class King extends Character {
         
         super({
             ...options,
-            speed: options.speed || 3,
-            maxHP: options.maxHP || 200,
+            speed: options.speed || 4.5,
+            maxHP: options.maxHP || 250,
             damage: options.damage || 1.5,
             radius: options.radius || 25,
             image: options.image || kingImage,
@@ -469,7 +469,7 @@ class Demoman extends Character {
             ...options,
             speed: options.speed || 5.5,
             maxHP: options.maxHP || 150,
-            damage: options.damage || 1.15,
+            damage: options.damage || 1.35,
             radius: options.radius || 24,
             image: options.image || demoImage,
             name: options.name || 'Demoman',

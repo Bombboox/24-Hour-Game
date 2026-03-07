@@ -240,8 +240,9 @@ class DemoExplosive {
         this.spin = options.spin || 0;
         this.angularVelocity = options.angularVelocity || 0.32;
         this.explosionRadius = options.explosionRadius || 155;
-        this.explosionDamage = options.explosionDamage || 30;
+        this.explosionDamage = options.explosionDamage || 80;
         this.explosionForce = options.explosionForce || 18;
+        this.selfDamageMultiplier = options.selfDamageMultiplier || 0.2;
     }
 
     update(deltaTime, gameState, io = null) {
@@ -346,7 +347,7 @@ class DemoExplosive {
             const normalizedX = dx / Math.max(0.0001, distance);
             const normalizedY = dy / Math.max(0.0001, distance);
             const falloff = Math.max(0.25, 1 - (distance / this.explosionRadius));
-            const selfMultiplier = player.id === this.ownerId ? 0.5 : 1;
+            const selfMultiplier = player.id === this.ownerId ? this.selfDamageMultiplier : 1;
             const damage = this.explosionDamage * falloff * selfMultiplier;
             const impulse = this.explosionForce * falloff;
 
