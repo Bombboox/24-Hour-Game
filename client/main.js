@@ -466,9 +466,8 @@ const EXTRAPOLATION_ALPHA_EASING = 1.2;
 const SNAPSHOT_INTERVAL_SMOOTHING = 0.15;
 const SNAPSHOT_JITTER_SMOOTHING = 0.2;
 const SERVER_DELTA_TIME_DIVISOR = 40;
-const BULLET_PRESENTATION_LEAD_MIN_MS = 10;
-const BULLET_PRESENTATION_LEAD_MAX_MS = 24;
-const BULLET_PRESENTATION_JITTER_FACTOR = 0.18;
+const BULLET_PRESENTATION_BLEND = 0.72;
+const MAX_BULLET_PRESENTATION_EXTRAPOLATION_MS = 220;
 const MAX_PREDICTION_STEP_MS = 50;
 const LOCAL_RECONCILIATION_LERP = 0.24;
 const LOCAL_RECONCILIATION_SNAP_DISTANCE = 170;
@@ -2668,7 +2667,7 @@ function startRenderLoop() {
         }
 
         applyLocalPlayerPrediction(renderState, timestamp);
-        applyBulletPresentationPrediction(renderState);
+        applyBulletPresentationPrediction(renderState, timestamp);
         draw(renderState);
     };
 
@@ -3157,36 +3156,78 @@ function applyLocalPlayerPrediction(renderState, timestamp) {
     };
 }
 
-function getBulletPresentationLeadMs() {
-    const estimatedLead = snapshotTiming.intervalEwma * 0.75 + snapshotTiming.jitterEwma * BULLET_PRESENTATION_JITTER_FACTOR;
-    return clamp(estimatedLead, BULLET_PRESENTATION_LEAD_MIN_MS, BULLET_PRESENTATION_LEAD_MAX_MS);
-}
-
 function shouldPredictBulletPresentation(bullet) {
-    if (!bullet || typeof bullet.speed !== 'number' || bullet.speed <= 0) {
+    if (!bullet) {
+        return false;
+    }
+
+    if (typeof bullet.angle !== 'number') {
         return false;
     }
 
     return (
         bullet.kind === 'bullet' ||
-        bullet.kind === 'reaverShard'
+        bullet.kind === 'reaverShard' ||
+        bullet.kind === 'rocket' ||
+        bullet.kind === 'flame'
     );
 }
 
-function applyBulletPresentationPrediction(renderState) {
+function applyBulletPresentationPrediction(renderState, timestamp) {
     if (!renderState?.bullets?.length) {
         return;
     }
 
-    const leadDeltaTime = getBulletPresentationLeadMs() / SERVER_DELTA_TIME_DIVISOR;
+    const latestSnapshotIndex = snapshotBuffer.length - 1;
+    if (latestSnapshotIndex < 0) {
+        return;
+    }
+
+    const latestSnapshot = snapshotBuffer[latestSnapshotIndex];
+    const previousSnapshot = getPreviousDistinctSnapshot(latestSnapshotIndex);
+    const latestBulletsById = new Map((latestSnapshot?.state?.bullets || []).map((bullet) => [bullet.id, bullet]));
+    const previousBulletsById = new Map((previousSnapshot?.state?.bullets || []).map((bullet) => [bullet.id, bullet]));
+
+    const now = typeof timestamp === 'number' ? timestamp : getNowMs();
+    const extrapolationMs = clamp(
+        now - latestSnapshot.receivedAt,
+        0,
+        MAX_BULLET_PRESENTATION_EXTRAPOLATION_MS
+    );
+
     for (const bullet of renderState.bullets) {
-        if (!shouldPredictBulletPresentation(bullet)) {
+        if (!bullet?.id || !shouldPredictBulletPresentation(bullet)) {
             continue;
         }
 
-        const angle = typeof bullet.angle === 'number' ? bullet.angle : 0;
-        bullet.x += Math.cos(angle) * bullet.speed * leadDeltaTime;
-        bullet.y += Math.sin(angle) * bullet.speed * leadDeltaTime;
+        const latestBullet = latestBulletsById.get(bullet.id);
+        if (!latestBullet) {
+            continue;
+        }
+
+        let vxPerMs = null;
+        let vyPerMs = null;
+        if (typeof latestBullet.speed === 'number' && latestBullet.speed > 0) {
+            const angle = latestBullet.angle;
+            vxPerMs = Math.cos(angle) * latestBullet.speed / SERVER_DELTA_TIME_DIVISOR;
+            vyPerMs = Math.sin(angle) * latestBullet.speed / SERVER_DELTA_TIME_DIVISOR;
+        } else {
+            const previousBullet = previousBulletsById.get(bullet.id);
+            if (previousBullet && previousSnapshot) {
+                const dtMs = Math.max(1, latestSnapshot.receivedAt - previousSnapshot.receivedAt);
+                vxPerMs = (latestBullet.x - previousBullet.x) / dtMs;
+                vyPerMs = (latestBullet.y - previousBullet.y) / dtMs;
+            }
+        }
+
+        if (vxPerMs === null || vyPerMs === null) {
+            continue;
+        }
+
+        const predictedX = latestBullet.x + vxPerMs * extrapolationMs;
+        const predictedY = latestBullet.y + vyPerMs * extrapolationMs;
+        bullet.x = lerp(bullet.x, predictedX, BULLET_PRESENTATION_BLEND);
+        bullet.y = lerp(bullet.y, predictedY, BULLET_PRESENTATION_BLEND);
     }
 }
 
