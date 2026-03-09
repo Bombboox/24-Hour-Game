@@ -455,8 +455,8 @@ var gameState = {
 }
 let latestTeamLives = null;
 const SNAPSHOT_BUFFER_SIZE = 90;
-const RENDER_INTERPOLATION_DELAY_MS = 60;
-const MAX_RENDER_INTERPOLATION_DELAY_MS = 120;
+const RENDER_INTERPOLATION_DELAY_MS = 80;
+const MAX_RENDER_INTERPOLATION_DELAY_MS = 160;
 const MAX_EXTRAPOLATION_MS = 140;
 const MIN_EXTRAPOLATION_SAMPLE_MS = 12;
 const MAX_LINEAR_EXTRAPOLATION_STEP = 42;
@@ -466,6 +466,9 @@ const EXTRAPOLATION_ALPHA_EASING = 1.2;
 const SNAPSHOT_INTERVAL_SMOOTHING = 0.15;
 const SNAPSHOT_JITTER_SMOOTHING = 0.2;
 const SERVER_DELTA_TIME_DIVISOR = 40;
+const BULLET_PRESENTATION_LEAD_MIN_MS = 10;
+const BULLET_PRESENTATION_LEAD_MAX_MS = 24;
+const BULLET_PRESENTATION_JITTER_FACTOR = 0.18;
 const MAX_PREDICTION_STEP_MS = 50;
 const LOCAL_RECONCILIATION_LERP = 0.24;
 const LOCAL_RECONCILIATION_SNAP_DISTANCE = 170;
@@ -2665,6 +2668,7 @@ function startRenderLoop() {
         }
 
         applyLocalPlayerPrediction(renderState, timestamp);
+        applyBulletPresentationPrediction(renderState);
         draw(renderState);
     };
 
@@ -3151,6 +3155,39 @@ function applyLocalPlayerPrediction(renderState, timestamp) {
         y: localPredictionState.y,
         angle: localPredictionState.angle
     };
+}
+
+function getBulletPresentationLeadMs() {
+    const estimatedLead = snapshotTiming.intervalEwma * 0.75 + snapshotTiming.jitterEwma * BULLET_PRESENTATION_JITTER_FACTOR;
+    return clamp(estimatedLead, BULLET_PRESENTATION_LEAD_MIN_MS, BULLET_PRESENTATION_LEAD_MAX_MS);
+}
+
+function shouldPredictBulletPresentation(bullet) {
+    if (!bullet || typeof bullet.speed !== 'number' || bullet.speed <= 0) {
+        return false;
+    }
+
+    return (
+        bullet.kind === 'bullet' ||
+        bullet.kind === 'reaverShard'
+    );
+}
+
+function applyBulletPresentationPrediction(renderState) {
+    if (!renderState?.bullets?.length) {
+        return;
+    }
+
+    const leadDeltaTime = getBulletPresentationLeadMs() / SERVER_DELTA_TIME_DIVISOR;
+    for (const bullet of renderState.bullets) {
+        if (!shouldPredictBulletPresentation(bullet)) {
+            continue;
+        }
+
+        const angle = typeof bullet.angle === 'number' ? bullet.angle : 0;
+        bullet.x += Math.cos(angle) * bullet.speed * leadDeltaTime;
+        bullet.y += Math.sin(angle) * bullet.speed * leadDeltaTime;
+    }
 }
 
 function interpolateEntities(previousEntities = [], nextEntities = [], alpha = 0, linearKeys = [], angularKeys = []) {

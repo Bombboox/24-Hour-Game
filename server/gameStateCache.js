@@ -116,6 +116,7 @@ class GameStateCache {
                 y: Math.round(bullet.y * 100) / 100,
                 angle: Math.round((bullet.angle || 0) * 1000) / 1000,
                 radius: bullet.radius,
+                speed: Math.round((bullet.speed || 0) * 1000) / 1000,
                 color: bullet.color,
                 playerId: bullet.playerId,
                 active: bullet.active,
