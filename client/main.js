@@ -62,6 +62,7 @@ const mobileQuitButton = document.getElementById("mobileQuitButton");
 const leaveMatchButton = document.getElementById("leaveMatchButton");
 const chatContainer = document.getElementById("chatContainer");
 const chatToggleButton = document.getElementById("chatToggleButton");
+const chatMiniButton = document.getElementById("chatMiniButton");
 const chatMessages = document.getElementById("chatMessages");
 const chatInput = document.getElementById("chatInput");
 const registerStatus = document.getElementById("registerStatus");
@@ -920,7 +921,8 @@ function setChatHidden(hidden) {
         return;
     }
 
-    chatContainer.classList.toggle('chat-collapsed', chatHiddenByUser);
+    chatContainer.classList.toggle('chat-hidden', chatHiddenByUser);
+    document.body.classList.toggle('chat-hidden', chatHiddenByUser);
     if (chatToggleButton) {
         chatToggleButton.textContent = chatHiddenByUser ? 'Show' : 'Hide';
     }
@@ -1059,6 +1061,14 @@ function setupChatUi() {
             revealChat();
         }
     });
+
+    if (chatMiniButton) {
+        chatMiniButton.addEventListener('click', () => {
+            setChatHidden(false);
+            revealChat();
+            chatInput.focus();
+        });
+    }
 
     chatInput.addEventListener('focus', () => {
         revealChat();
@@ -3233,7 +3243,7 @@ function getProjectileVelocityPerMs(latestEntity, previousEntity, latestSnapshot
     };
 }
 
-function applyPredictionToProjectileSet(renderEntities, latestEntities, previousEntities, latestSnapshot, previousSnapshot, extrapolationMs, renderState, type) {
+function applyPredictionToProjectileSet(renderEntities, latestEntities, previousEntities, latestSnapshot, previousSnapshot, extrapolationMs, renderState, type, blendOverride = null) {
     if (!Array.isArray(renderEntities) || renderEntities.length === 0) {
         return;
     }
@@ -3253,21 +3263,20 @@ function applyPredictionToProjectileSet(renderEntities, latestEntities, previous
 
         const predictedX = latestEntity.x + velocity.vxPerMs * extrapolationMs;
         const predictedY = latestEntity.y + velocity.vyPerMs * extrapolationMs;
-        renderEntity.x = lerp(renderEntity.x, predictedX, PROJECTILE_PRESENTATION_BLEND);
-        renderEntity.y = lerp(renderEntity.y, predictedY, PROJECTILE_PRESENTATION_BLEND);
+        const dx = predictedX - renderEntity.x;
+        const dy = predictedY - renderEntity.y;
+        const dot = dx * velocity.vxPerMs + dy * velocity.vyPerMs;
+        if (dot <= 0) {
+            continue;
+        }
+        const blend = typeof blendOverride === 'number' ? blendOverride : PROJECTILE_PRESENTATION_BLEND;
+        renderEntity.x = lerp(renderEntity.x, predictedX, blend);
+        renderEntity.y = lerp(renderEntity.y, predictedY, blend);
     }
 }
 
 function applyProjectilePresentationPrediction(renderState, timestamp) {
     if (!renderState || (!renderState.bullets?.length && !renderState.grenades?.length)) {
-        return;
-    }
-
-    // Snapshot interpolation/extrapolation already advances projectile positions.
-    // Only layer on the extra presentation prediction when the client is actively
-    // extrapolating beyond the latest server snapshot; doing it during normal
-    // interpolation can overshoot and then snap backward on collision updates.
-    if (netDebugStats.mode !== 'extrapolate') {
         return;
     }
 
@@ -3285,6 +3294,10 @@ function applyProjectilePresentationPrediction(renderState, timestamp) {
         MAX_PROJECTILE_PRESENTATION_EXTRAPOLATION_MS
     );
 
+    const blend = netDebugStats.mode === 'extrapolate'
+        ? PROJECTILE_PRESENTATION_BLEND
+        : PROJECTILE_PRESENTATION_BLEND * 0.35;
+
     applyPredictionToProjectileSet(
         (renderState.bullets || []).filter(shouldPredictBulletPresentation),
         latestSnapshot?.state?.bullets || [],
@@ -3293,7 +3306,8 @@ function applyProjectilePresentationPrediction(renderState, timestamp) {
         previousSnapshot,
         extrapolationMs,
         renderState,
-        'bullet'
+        'bullet',
+        blend
     );
 
     applyPredictionToProjectileSet(
@@ -3304,7 +3318,8 @@ function applyProjectilePresentationPrediction(renderState, timestamp) {
         previousSnapshot,
         extrapolationMs,
         renderState,
-        'grenade'
+        'grenade',
+        blend
     );
 }
 

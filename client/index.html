@@ -644,6 +644,10 @@
             opacity: 0;
         }
 
+        .chat-container.chat-hidden {
+            display: none;
+        }
+
         .chat-header {
             display: flex;
             align-items: center;
@@ -716,6 +720,30 @@
             box-shadow: 0 0 0 2px rgba(96, 214, 255, 0.2);
         }
 
+        .chat-mini-button {
+            position: absolute;
+            left: 50%;
+            bottom: 132px;
+            transform: translateX(-50%);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            width: 44px;
+            height: 44px;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.26);
+            background: rgba(12, 24, 36, 0.92);
+            color: #e6f3ff;
+            font-family: 'CustomFont', 'Arial', sans-serif;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+            cursor: pointer;
+            z-index: 166;
+        }
+
         @media (pointer: coarse) {
             .leave-match-button {
                 display: none;
@@ -731,6 +759,10 @@
 
             .chat-messages {
                 height: 80px;
+            }
+
+            body.chat-hidden .chat-mini-button {
+                display: flex;
             }
         }
 
@@ -1998,6 +2030,7 @@
                 <input id="chatInput" class="chat-input" type="text" maxlength="180" placeholder="Press Enter to chat" />
             </div>
         </div>
+        <button id="chatMiniButton" class="chat-mini-button" type="button">Chat</button>
         <div id="mobileHud" class="mobile-hud">
             <button id="mobileQuitButton" class="mobile-quit-button">Quit</button>
             <div id="moveStick" class="mobile-stick mobile-stick-left">
