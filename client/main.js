@@ -105,6 +105,7 @@ const AMBIENCE_START_RETRY_MS = 220;
 const AMBIENCE_START_MAX_ATTEMPTS = 12;
 const LASER_LOOP_VOLUME = 0.2;
 const FLAME_LOOP_VOLUME = 0.24;
+const AUDIO_RANGE_MULTIPLIER = 1.15;
 
 const playerImages = {
     King: new Image(),
@@ -3418,6 +3419,96 @@ function clamp(value, minValue, maxValue) {
     return Math.max(minValue, Math.min(maxValue, value));
 }
 
+function getLocalPlayerPosition() {
+    if (
+        localPredictionState &&
+        Number.isFinite(localPredictionState.x) &&
+        Number.isFinite(localPredictionState.y)
+    ) {
+        return { x: localPredictionState.x, y: localPredictionState.y };
+    }
+
+    const localPlayer = gameState.players.find((player) => player.id === socket.id);
+    if (localPlayer && Number.isFinite(localPlayer.x) && Number.isFinite(localPlayer.y)) {
+        return { x: localPlayer.x, y: localPlayer.y };
+    }
+
+    return null;
+}
+
+function getAudioMaxDistance() {
+    const base = Math.max(canvas.width || 0, canvas.height || 0);
+    if (!Number.isFinite(base) || base <= 0) {
+        return 0;
+    }
+    return base * AUDIO_RANGE_MULTIPLIER;
+}
+
+function getProximityVolume(x, y, baseVolume = 1) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return clamp(baseVolume, 0, 1);
+    }
+
+    const listener = getLocalPlayerPosition();
+    if (!listener) {
+        return clamp(baseVolume, 0, 1);
+    }
+
+    const maxDistance = getAudioMaxDistance();
+    if (!Number.isFinite(maxDistance) || maxDistance <= 0) {
+        return clamp(baseVolume, 0, 1);
+    }
+
+    const dx = x - listener.x;
+    const dy = y - listener.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    const falloff = clamp(1 - distance / maxDistance, 0, 1);
+    return clamp(baseVolume * falloff, 0, 1);
+}
+
+function playSpatialSound(soundId, baseVolume, x, y) {
+    if (!soundManager || typeof soundManager.play !== 'function') {
+        return null;
+    }
+
+    const volume = getProximityVolume(x, y, baseVolume);
+    if (volume <= 0.001) {
+        return null;
+    }
+
+    return soundManager.play(soundId, volume);
+}
+
+function getBulletSoundId(bullet) {
+    if (!bullet) {
+        return null;
+    }
+
+    switch (bullet.kind) {
+        case 'rocket':
+            return 'rocket_launch';
+        case 'reaverShard':
+            return 'reaver_fire';
+        case 'bullet':
+            return 'shoot';
+        default:
+            return null;
+    }
+}
+
+function getBulletSoundVolume(soundId) {
+    switch (soundId) {
+        case 'rocket_launch':
+            return 0.3;
+        case 'reaver_fire':
+            return 0.25;
+        case 'shoot':
+            return 0.25;
+        default:
+            return 0.25;
+    }
+}
+
 function shortestAngleDelta(start, end) {
     let delta = end - start;
     while (delta > Math.PI) delta -= Math.PI * 2;
@@ -3470,6 +3561,7 @@ function applyDeltaToGameState(delta) {
     // Handle player updates
     if (Array.isArray(delta.players)) {
         for (const playerUpdate of delta.players) {
+            const previousPlayer = clientGameStateCache.players.get(playerUpdate.id);
             if (playerUpdate.removed) {
                 // Remove player
                 gameState.players = gameState.players.filter(p => p.id !== playerUpdate.id);
@@ -3477,12 +3569,25 @@ function applyDeltaToGameState(delta) {
             } else {
                 // Update or add player
                 const existingIndex = gameState.players.findIndex(p => p.id === playerUpdate.id);
+                let nextPlayer = null;
                 if (existingIndex >= 0) {
-                    gameState.players[existingIndex] = { ...gameState.players[existingIndex], ...playerUpdate };
+                    nextPlayer = { ...gameState.players[existingIndex], ...playerUpdate };
+                    gameState.players[existingIndex] = nextPlayer;
                 } else {
-                    gameState.players.push(playerUpdate);
+                    nextPlayer = { ...playerUpdate };
+                    gameState.players.push(nextPlayer);
                 }
-                clientGameStateCache.players.set(playerUpdate.id, playerUpdate);
+                clientGameStateCache.players.set(playerUpdate.id, nextPlayer);
+
+                const previousPulse = previousPlayer?.kingAuraPulseTimer || 0;
+                const nextPulse = nextPlayer?.kingAuraPulseTimer || 0;
+                if (
+                    playerUpdate.id !== socket.id &&
+                    previousPulse <= 0 &&
+                    nextPulse > 0
+                ) {
+                    playSpatialSound('bell', 0.28, nextPlayer.x, nextPlayer.y);
+                }
             }
         }
     }
@@ -3491,12 +3596,20 @@ function applyDeltaToGameState(delta) {
     if (Array.isArray(delta.bullets)) {
         for (const bulletUpdate of delta.bullets) {
             const existingIndex = gameState.bullets.findIndex(b => b.id === bulletUpdate.id);
+            const isNewBullet = existingIndex < 0;
             if (existingIndex >= 0) {
                 gameState.bullets[existingIndex] = { ...gameState.bullets[existingIndex], ...bulletUpdate };
             } else {
                 gameState.bullets.push(bulletUpdate);
             }
             clientGameStateCache.bullets.set(bulletUpdate.id, bulletUpdate);
+
+            if (isNewBullet && bulletUpdate?.playerId && bulletUpdate.playerId !== socket.id) {
+                const soundId = getBulletSoundId(bulletUpdate);
+                if (soundId) {
+                    playSpatialSound(soundId, getBulletSoundVolume(soundId), bulletUpdate.x, bulletUpdate.y);
+                }
+            }
         }
     }
 
@@ -3532,7 +3645,7 @@ function applyDeltaToGameState(delta) {
             const removedBullet = clientGameStateCache.bullets.get(bulletId);
             if (removedBullet?.kind === 'rocket') {
                 spawnExplosiveEffect(removedBullet.x, removedBullet.y);
-                soundManager.play('explosion', 0.3);
+                playSpatialSound('explosion', 0.3, removedBullet.x, removedBullet.y);
             }
             gameState.bullets = gameState.bullets.filter(b => b.id !== bulletId);
             clientGameStateCache.bullets.delete(bulletId);
@@ -3549,7 +3662,7 @@ function applyDeltaToGameState(delta) {
                 removedGrenade?.kind === 'waffleDrone'
             ) {
                 spawnExplosiveEffect(removedGrenade.x, removedGrenade.y);
-                soundManager.play('explosion', 0.3);
+                playSpatialSound('explosion', 0.3, removedGrenade.x, removedGrenade.y);
             }
             gameState.grenades = gameState.grenades.filter(g => g.id !== grenadeId);
             clientGameStateCache.grenades.delete(grenadeId);
@@ -4881,7 +4994,8 @@ function handleSharedAbility() {
 }
 
 function handleKingAuraPulse() {
-    soundManager.play('bell', 0.28);
+    const thisPlayer = gameState.players.find((player) => player.id === socket.id);
+    playSpatialSound('bell', 0.28, thisPlayer?.x, thisPlayer?.y);
 }
 
 function handleReaverZap() {
