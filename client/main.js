@@ -2760,7 +2760,9 @@ function getInterpolatedRenderState() {
     const interpolationDelay = getDynamicInterpolationDelayMs();
     netDebugStats.lastInterpolationDelayMs = interpolationDelay;
     netDebugStats.lastSnapshotAgeMs = Math.max(0, now - snapshotBuffer[snapshotBuffer.length - 1].receivedAt);
-    const targetTime = now - interpolationDelay;
+    const latestReceivedAt = snapshotBuffer[snapshotBuffer.length - 1].receivedAt;
+    const minBackstep = getInterpolationBackstepMs();
+    const targetTime = Math.min(now - interpolationDelay, latestReceivedAt - minBackstep);
 
     let newerIndex = -1;
     for (let i = 0; i < snapshotBuffer.length; i++) {
@@ -2879,6 +2881,12 @@ function getDynamicInterpolationDelayMs() {
     const stalenessBoost = Math.max(0, lastSnapshotAgeMs - snapshotTiming.intervalEwma) * 0.45;
     const estimatedDelay = snapshotTiming.intervalEwma * 2.35 + snapshotTiming.jitterEwma * 2.8 + stalenessBoost;
     return Math.max(RENDER_INTERPOLATION_DELAY_MS, Math.min(MAX_RENDER_INTERPOLATION_DELAY_MS, estimatedDelay));
+}
+
+function getInterpolationBackstepMs() {
+    const interval = snapshotTiming.intervalEwma;
+    const jitter = snapshotTiming.jitterEwma;
+    return Math.max(12, interval * 1.2 + jitter * 0.75);
 }
 
 function getLatestSnapshotState() {
