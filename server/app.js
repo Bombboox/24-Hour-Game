@@ -9,7 +9,7 @@ const { createGameState, gameLoop, generateNewMap, TWO_VS_TWO_TEAM_LIVES } = req
 const { Berserker, Ninja, King, Demoman, Reaver, Waffle } = require('./character');
 const { M4, Sniper, Pistol, Shotgun, LaserGun, Taser, RocketLauncher, BubbleLauncher, Flamethrower } = require('./weapon');
 const { Grenade, Invisibility, ShieldBarrier, TurretAbility, HealingCircle } = require('./specialAbilities');
-const { MAP_RADIUS, FRAME_RATE } = require('./constants');
+const { MAP_RADIUS, FRAME_RATE, SNAPSHOT_RATE } = require('./constants');
 const { GameStateCache } = require('./gameStateCache');
 const { Worker } = require('worker_threads');
 
@@ -136,7 +136,7 @@ const io = {
 
 const state = new Map();
 const clientRooms = new Map();
-const gameIntervals = new Map();
+const gameLoops = new Map();
 const gameStateCaches = new Map();
 const roomPlayers = new Map();
 
@@ -1046,11 +1046,7 @@ function cleanupRoom(roomName) {
         });
     }
     
-    const intervalId = gameIntervals.get(roomName);
-    if (intervalId) {
-        clearInterval(intervalId);
-        gameIntervals.delete(roomName);
-    }
+    stopGameLoop(roomName);
     
     state.delete(roomName);
     gameStateCaches.delete(roomName);
@@ -2138,7 +2134,7 @@ io.on('connection', (socket) => {
                 
                 io.sockets.in(roomName).emit('gameStarting');
                 broadcastFullGameState(roomName);
-                startGameInterval(roomName);
+                startGameLoop(roomName);
                 
                 logger.info(`Player joined existing room: ${roomName}`);
             } else {
@@ -2202,7 +2198,7 @@ io.on('connection', (socket) => {
                 state.get(FREE_FOR_ALL_ROOM).obstacles = generateNewMap();
                 state.get(FREE_FOR_ALL_ROOM).gameMode = 'freeForAll';
                 gameStateCaches.set(FREE_FOR_ALL_ROOM, new GameStateCache());
-                startGameInterval(FREE_FOR_ALL_ROOM);
+                startGameLoop(FREE_FOR_ALL_ROOM);
                 
                 logger.info('Free for all room created');
             }
@@ -2305,7 +2301,7 @@ io.on('connection', (socket) => {
             if (joinedCount >= TWO_VS_TWO_MAX_PLAYERS) {
                 io.sockets.in(roomName).emit('gameStarting');
                 broadcastFullGameState(roomName);
-                startGameInterval(roomName);
+                startGameLoop(roomName);
                 logger.info(`2v2 room started: ${roomName}`);
             } else {
                 socket.emit('waitingForPlayer');
@@ -2572,29 +2568,64 @@ io.on('connection', (socket) => {
 });
 
 const FRAME_INTERVAL = 1000 / FRAME_RATE;
+const SNAPSHOT_INTERVAL = 1000 / SNAPSHOT_RATE;
 const DELTA_TIME_DIVISOR = 40;
 
-function startGameInterval(gameCode) {
-    if (gameIntervals.has(gameCode)) {
+function stopGameLoop(gameCode) {
+    const loopState = gameLoops.get(gameCode);
+    if (!loopState) {
         return;
     }
-    
-    let lastTime = Date.now();
-    const intervalID = setInterval(() => {
-        const gameState = state.get(gameCode);
-        if (!gameState) {
-            clearInterval(intervalID);
-            gameIntervals.delete(gameCode);
+
+    loopState.running = false;
+    if (loopState.immediateHandle) {
+        clearImmediate(loopState.immediateHandle);
+    }
+    gameLoops.delete(gameCode);
+}
+
+function startGameLoop(gameCode) {
+    if (gameLoops.has(gameCode)) {
+        return;
+    }
+
+    const loopState = {
+        running: true,
+        lastTime: performance.now(),
+        accumulator: 0,
+        snapshotAccumulator: 0,
+        immediateHandle: null
+    };
+
+    const step = () => {
+        if (!loopState.running) {
             return;
         }
-        
-        const currentTime = Date.now();
-        const deltaTime = (currentTime - lastTime) / DELTA_TIME_DIVISOR;
-        lastTime = currentTime;
-        
-        // Use worker thread for heavy computations if needed
-        gameLoop(gameState, deltaTime, io);
-        emitGameState(gameCode, gameState);
+
+        const gameState = state.get(gameCode);
+        if (!gameState) {
+            stopGameLoop(gameCode);
+            return;
+        }
+
+        const currentTime = performance.now();
+        const frameDeltaMs = Math.max(0, currentTime - loopState.lastTime);
+        loopState.lastTime = currentTime;
+
+        // Cap accumulator to avoid spiral-of-death after stalls.
+        const maxAccumulation = FRAME_INTERVAL * 5;
+        loopState.accumulator = Math.min(loopState.accumulator + frameDeltaMs, maxAccumulation);
+        loopState.snapshotAccumulator = Math.min(loopState.snapshotAccumulator + frameDeltaMs, SNAPSHOT_INTERVAL * 4);
+
+        while (loopState.accumulator >= FRAME_INTERVAL) {
+            gameLoop(gameState, FRAME_INTERVAL / DELTA_TIME_DIVISOR, io);
+            loopState.accumulator -= FRAME_INTERVAL;
+        }
+
+        if (loopState.snapshotAccumulator >= SNAPSHOT_INTERVAL) {
+            loopState.snapshotAccumulator = loopState.snapshotAccumulator % SNAPSHOT_INTERVAL;
+            emitGameState(gameCode, gameState);
+        }
 
         if (
             gameState.gameMode === '1v1' &&
@@ -2641,9 +2672,12 @@ function startGameInterval(gameCode) {
                 cleanupRoom(gameCode);
             }, 9000);
         }
-    }, FRAME_INTERVAL);
-    
-    gameIntervals.set(gameCode, intervalID);
+
+        loopState.immediateHandle = setImmediate(step);
+    };
+
+    loopState.immediateHandle = setImmediate(step);
+    gameLoops.set(gameCode, loopState);
 }
 
 function emitGameState(gameCode, gameState) {
@@ -2695,8 +2729,8 @@ process.on('SIGTERM', () => {
     logger.info('SIGTERM received, shutting down gracefully');
     
     // Clean up all intervals
-    for (const intervalId of gameIntervals.values()) {
-        clearInterval(intervalId);
+    for (const gameCode of gameLoops.keys()) {
+        stopGameLoop(gameCode);
     }
 
     serializerWorker.terminate();
@@ -2712,8 +2746,8 @@ process.on('SIGINT', () => {
     logger.info('SIGINT received, shutting down gracefully');
     
     // Clean up all intervals
-    for (const intervalId of gameIntervals.values()) {
-        clearInterval(intervalId);
+    for (const gameCode of gameLoops.keys()) {
+        stopGameLoop(gameCode);
     }
 
     serializerWorker.terminate();

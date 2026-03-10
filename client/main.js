@@ -3180,14 +3180,33 @@ function applyLocalPlayerPrediction(renderState, timestamp) {
     );
     applyPredictedMovement(localPredictionState, authoritativePlayer, collidableObstacles, deltaMs);
 
-    localPredictionState.angle = localAimAngle;
+    const renderAimAngle = getLocalRenderAimAngle();
+    localAimAngle = renderAimAngle;
+    localPredictionState.angle = renderAimAngle;
     renderState.players[localPlayerIndex] = {
         ...renderState.players[localPlayerIndex],
         ...authoritativePlayer,
         x: localPredictionState.x,
         y: localPredictionState.y,
-        angle: localPredictionState.angle
+        angle: renderAimAngle
     };
+}
+
+function getLocalRenderAimAngle() {
+    if (isChatFocused()) {
+        return localAimAngle;
+    }
+
+    if (!Number.isFinite(mouseX) || !Number.isFinite(mouseY)) {
+        return localAimAngle;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const canvasMouseX = mouseX - rect.left;
+    const canvasMouseY = mouseY - rect.top;
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    return Math.atan2(canvasMouseY - centerY, canvasMouseX - centerX);
 }
 
 function shouldPredictBulletPresentation(bullet) {
