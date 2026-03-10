@@ -466,8 +466,8 @@ const EXTRAPOLATION_ALPHA_EASING = 1.2;
 const SNAPSHOT_INTERVAL_SMOOTHING = 0.15;
 const SNAPSHOT_JITTER_SMOOTHING = 0.2;
 const SERVER_DELTA_TIME_DIVISOR = 40;
-const BULLET_PRESENTATION_BLEND = 0.72;
-const MAX_BULLET_PRESENTATION_EXTRAPOLATION_MS = 220;
+const PROJECTILE_PRESENTATION_BLEND = 0.72;
+const MAX_PROJECTILE_PRESENTATION_EXTRAPOLATION_MS = 220;
 const MAX_PREDICTION_STEP_MS = 50;
 const LOCAL_RECONCILIATION_LERP = 0.24;
 const LOCAL_RECONCILIATION_SNAP_DISTANCE = 170;
@@ -483,6 +483,7 @@ const FALLBACK_MOVE_SPEED_BY_NAME = Object.freeze({
 const NET_DEBUG_OVERLAY_DEFAULT = false;
 const NET_DEBUG_TOGGLE_KEY = 'l';
 let snapshotBuffer = [];
+let lastProcessedGameStateFrameNumber = null;
 let snapshotTiming = {
     lastReceivedAt: null,
     intervalEwma: 1000 / 30,
@@ -2608,6 +2609,20 @@ function cancelSearch() {
 function handleGameState(deltaData) {
     if(!gameActive) return;
 
+    const isFullState = deltaData?.isFullState === true || !deltaData?.frameNumber;
+    const frameNumber = Number(deltaData?.frameNumber);
+    if (!isFullState && Number.isFinite(frameNumber)) {
+        if (
+            Number.isFinite(lastProcessedGameStateFrameNumber) &&
+            frameNumber <= lastProcessedGameStateFrameNumber
+        ) {
+            return;
+        }
+        lastProcessedGameStateFrameNumber = frameNumber;
+    } else if (isFullState) {
+        lastProcessedGameStateFrameNumber = Number.isFinite(frameNumber) ? frameNumber : null;
+    }
+
     // Apply delta updates to local game state
     applyDeltaToGameState(deltaData);
 
@@ -2632,6 +2647,7 @@ function resetClientCache() {
     combatTexts.length = 0;
     explosiveEffects.length = 0;
     snapshotBuffer = [];
+    lastProcessedGameStateFrameNumber = null;
     snapshotTiming.lastReceivedAt = null;
     snapshotTiming.intervalEwma = 1000 / 30;
     snapshotTiming.jitterEwma = 0;
@@ -2667,7 +2683,7 @@ function startRenderLoop() {
         }
 
         applyLocalPlayerPrediction(renderState, timestamp);
-        applyBulletPresentationPrediction(renderState, timestamp);
+        applyProjectilePresentationPrediction(renderState, timestamp);
         draw(renderState);
     };
 
@@ -3157,11 +3173,7 @@ function applyLocalPlayerPrediction(renderState, timestamp) {
 }
 
 function shouldPredictBulletPresentation(bullet) {
-    if (!bullet) {
-        return false;
-    }
-
-    if (typeof bullet.angle !== 'number') {
+    if (!bullet || typeof bullet.angle !== 'number') {
         return false;
     }
 
@@ -3169,12 +3181,93 @@ function shouldPredictBulletPresentation(bullet) {
         bullet.kind === 'bullet' ||
         bullet.kind === 'reaverShard' ||
         bullet.kind === 'rocket' ||
-        bullet.kind === 'flame'
+        bullet.kind === 'flame' ||
+        bullet.kind === 'bubble'
     );
 }
 
-function applyBulletPresentationPrediction(renderState, timestamp) {
-    if (!renderState?.bullets?.length) {
+function shouldPredictGrenadePresentation(grenade) {
+    if (!grenade) {
+        return false;
+    }
+
+    if (grenade.isStationary) {
+        return false;
+    }
+
+    return typeof grenade.angle === 'number' || typeof grenade.spin === 'number';
+}
+
+function getProjectileVelocityPerMs(latestEntity, previousEntity, latestSnapshot, previousSnapshot, type) {
+    if (!latestEntity || !latestSnapshot) {
+        return null;
+    }
+
+    if (type === 'grenade' && (
+        typeof latestEntity.velocityX === 'number' ||
+        typeof latestEntity.velocityY === 'number'
+    )) {
+        const velocityX = Number(latestEntity.velocityX) || 0;
+        const velocityY = Number(latestEntity.velocityY) || 0;
+        return {
+            vxPerMs: velocityX / SERVER_DELTA_TIME_DIVISOR,
+            vyPerMs: velocityY / SERVER_DELTA_TIME_DIVISOR
+        };
+    }
+
+    if (typeof latestEntity.speed === 'number' && latestEntity.speed > 0 && typeof latestEntity.angle === 'number') {
+        return {
+            vxPerMs: Math.cos(latestEntity.angle) * latestEntity.speed / SERVER_DELTA_TIME_DIVISOR,
+            vyPerMs: Math.sin(latestEntity.angle) * latestEntity.speed / SERVER_DELTA_TIME_DIVISOR
+        };
+    }
+
+    if (!previousEntity || !previousSnapshot) {
+        return null;
+    }
+
+    const dtMs = Math.max(1, latestSnapshot.receivedAt - previousSnapshot.receivedAt);
+    return {
+        vxPerMs: (latestEntity.x - previousEntity.x) / dtMs,
+        vyPerMs: (latestEntity.y - previousEntity.y) / dtMs
+    };
+}
+
+function applyPredictionToProjectileSet(renderEntities, latestEntities, previousEntities, latestSnapshot, previousSnapshot, extrapolationMs, renderState, type) {
+    if (!Array.isArray(renderEntities) || renderEntities.length === 0) {
+        return;
+    }
+
+    const latestById = new Map((latestEntities || []).map((entity) => [entity.id, entity]));
+    const previousById = new Map((previousEntities || []).map((entity) => [entity.id, entity]));
+
+    for (const renderEntity of renderEntities) {
+        if (!renderEntity?.id) continue;
+
+        const latestEntity = latestById.get(renderEntity.id);
+        if (!latestEntity) continue;
+
+        const previousEntity = previousById.get(renderEntity.id);
+        const velocity = getProjectileVelocityPerMs(latestEntity, previousEntity, latestSnapshot, previousSnapshot, type);
+        if (!velocity) continue;
+
+        const predictedX = latestEntity.x + velocity.vxPerMs * extrapolationMs;
+        const predictedY = latestEntity.y + velocity.vyPerMs * extrapolationMs;
+        renderEntity.x = lerp(renderEntity.x, predictedX, PROJECTILE_PRESENTATION_BLEND);
+        renderEntity.y = lerp(renderEntity.y, predictedY, PROJECTILE_PRESENTATION_BLEND);
+    }
+}
+
+function applyProjectilePresentationPrediction(renderState, timestamp) {
+    if (!renderState || (!renderState.bullets?.length && !renderState.grenades?.length)) {
+        return;
+    }
+
+    // Snapshot interpolation/extrapolation already advances projectile positions.
+    // Only layer on the extra presentation prediction when the client is actively
+    // extrapolating beyond the latest server snapshot; doing it during normal
+    // interpolation can overshoot and then snap backward on collision updates.
+    if (netDebugStats.mode !== 'extrapolate') {
         return;
     }
 
@@ -3185,50 +3278,34 @@ function applyBulletPresentationPrediction(renderState, timestamp) {
 
     const latestSnapshot = snapshotBuffer[latestSnapshotIndex];
     const previousSnapshot = getPreviousDistinctSnapshot(latestSnapshotIndex);
-    const latestBulletsById = new Map((latestSnapshot?.state?.bullets || []).map((bullet) => [bullet.id, bullet]));
-    const previousBulletsById = new Map((previousSnapshot?.state?.bullets || []).map((bullet) => [bullet.id, bullet]));
-
     const now = typeof timestamp === 'number' ? timestamp : getNowMs();
     const extrapolationMs = clamp(
         now - latestSnapshot.receivedAt,
         0,
-        MAX_BULLET_PRESENTATION_EXTRAPOLATION_MS
+        MAX_PROJECTILE_PRESENTATION_EXTRAPOLATION_MS
     );
 
-    for (const bullet of renderState.bullets) {
-        if (!bullet?.id || !shouldPredictBulletPresentation(bullet)) {
-            continue;
-        }
+    applyPredictionToProjectileSet(
+        (renderState.bullets || []).filter(shouldPredictBulletPresentation),
+        latestSnapshot?.state?.bullets || [],
+        previousSnapshot?.state?.bullets || [],
+        latestSnapshot,
+        previousSnapshot,
+        extrapolationMs,
+        renderState,
+        'bullet'
+    );
 
-        const latestBullet = latestBulletsById.get(bullet.id);
-        if (!latestBullet) {
-            continue;
-        }
-
-        let vxPerMs = null;
-        let vyPerMs = null;
-        if (typeof latestBullet.speed === 'number' && latestBullet.speed > 0) {
-            const angle = latestBullet.angle;
-            vxPerMs = Math.cos(angle) * latestBullet.speed / SERVER_DELTA_TIME_DIVISOR;
-            vyPerMs = Math.sin(angle) * latestBullet.speed / SERVER_DELTA_TIME_DIVISOR;
-        } else {
-            const previousBullet = previousBulletsById.get(bullet.id);
-            if (previousBullet && previousSnapshot) {
-                const dtMs = Math.max(1, latestSnapshot.receivedAt - previousSnapshot.receivedAt);
-                vxPerMs = (latestBullet.x - previousBullet.x) / dtMs;
-                vyPerMs = (latestBullet.y - previousBullet.y) / dtMs;
-            }
-        }
-
-        if (vxPerMs === null || vyPerMs === null) {
-            continue;
-        }
-
-        const predictedX = latestBullet.x + vxPerMs * extrapolationMs;
-        const predictedY = latestBullet.y + vyPerMs * extrapolationMs;
-        bullet.x = lerp(bullet.x, predictedX, BULLET_PRESENTATION_BLEND);
-        bullet.y = lerp(bullet.y, predictedY, BULLET_PRESENTATION_BLEND);
-    }
+    applyPredictionToProjectileSet(
+        (renderState.grenades || []).filter(shouldPredictGrenadePresentation),
+        latestSnapshot?.state?.grenades || [],
+        previousSnapshot?.state?.grenades || [],
+        latestSnapshot,
+        previousSnapshot,
+        extrapolationMs,
+        renderState,
+        'grenade'
+    );
 }
 
 function interpolateEntities(previousEntities = [], nextEntities = [], alpha = 0, linearKeys = [], angularKeys = []) {
@@ -3307,8 +3384,8 @@ function shortestAngleDelta(start, end) {
 }
 
 function applyDeltaToGameState(delta) {
-    // Check if this is a full state update (no frameNumber means it's a full state)
-    if (!delta.frameNumber) {
+    // Check if this is a full state update.
+    if (delta?.isFullState === true || !delta.frameNumber) {
         // Full state update - replace everything
         gameState.players = ensureArray(delta.players);
         gameState.bullets = ensureArray(delta.bullets);

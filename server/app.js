@@ -42,7 +42,6 @@ let dbPool = null;
 const serializerWorker = new Worker(path.join(__dirname, 'serializationWorker.js'));
 let nextSerializationJobId = 1;
 const pendingSerializationJobs = new Map();
-const roomEmitSequence = new Map();
 
 serializerWorker.on('message', (result) => {
     const pending = pendingSerializationJobs.get(result.id);
@@ -1789,7 +1788,7 @@ function sendFullGameState(socket, gameCode) {
     if (!cache || !gameState) return;
     
     const fullState = cache.serializeGameState(gameState);
-    delete fullState.frameNumber;
+    fullState.isFullState = true;
     socket.emit('gameState', fullState);
 }
 
@@ -1799,7 +1798,7 @@ function broadcastFullGameState(gameCode) {
     if (!cache || !gameState) return;
 
     const fullState = cache.serializeGameState(gameState);
-    delete fullState.frameNumber;
+    fullState.isFullState = true;
 
     for (const player of gameState.players || []) {
         if (!player?.id) continue;
@@ -2659,7 +2658,7 @@ function emitGameState(gameCode, gameState) {
                 cache.reset();
                 delete gameState.cacheReset;
                 payload = cache.serializeGameState(gameState);
-                delete payload.frameNumber;
+                payload.isFullState = true;
             } else {
                 payload = cache.updateAndGetDelta(gameState);
             }
@@ -2668,14 +2667,8 @@ function emitGameState(gameCode, gameState) {
                 return;
             }
 
-            const sequence = (roomEmitSequence.get(gameCode) || 0) + 1;
-            roomEmitSequence.set(gameCode, sequence);
-
             serializePacketAsync('gameState', payload)
                 .then((encodedPacket) => {
-                    if (roomEmitSequence.get(gameCode) !== sequence) {
-                        return;
-                    }
                     io.sockets.in(gameCode).emitEncoded(encodedPacket);
                 })
                 .catch((error) => {
