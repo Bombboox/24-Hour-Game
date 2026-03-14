@@ -9,6 +9,7 @@ const { createGameState, gameLoop, generateNewMap, TWO_VS_TWO_TEAM_LIVES } = req
 const { Berserker, Ninja, King, Demoman, Reaver, Waffle } = require('./character');
 const { M4, Sniper, Pistol, Shotgun, LaserGun, Taser, RocketLauncher, BubbleLauncher, Flamethrower } = require('./weapon');
 const { Grenade, Invisibility, ShieldBarrier, TurretAbility, HealingCircle } = require('./specialAbilities');
+const { ensureBotState } = require('./botAI');
 const { MAP_RADIUS, FRAME_RATE, SNAPSHOT_RATE } = require('./constants');
 const { GameStateCache } = require('./gameStateCache');
 const { Worker } = require('worker_threads');
@@ -29,6 +30,10 @@ const ELO_K_FACTOR = 32;
 const MIN_ACCOUNT_ELO = 100;
 const ONE_VS_ONE_KILL_TARGET = 5;
 const TWO_VS_TWO_MAX_PLAYERS = 4;
+const BOT_FFA_COUNT = Math.max(0, Number(process.env.BOT_FFA_COUNT ?? 4));
+const BOT_ONE_VS_ONE_QUEUE = Math.max(0, Number(process.env.BOT_1V1_QUEUE ?? 2));
+const BOT_FFA_REFRESH_MS = Math.max(60000, Number(process.env.BOT_FFA_REFRESH_MS ?? (1000 * 60 * 30)));
+const BOT_MAINTENANCE_INTERVAL_MS = Math.max(2000, Number(process.env.BOT_MAINTENANCE_INTERVAL_MS ?? 5000));
 
 let wsApp;
 const socketsById = new Map();
@@ -1615,6 +1620,128 @@ function createPlayer(characterType, weaponType, secondaryWeaponType, sharedAbil
     return player;
 }
 
+const oneVsOneBotQueue = [];
+
+function pickRandom(list) {
+    if (!Array.isArray(list) || list.length === 0) {
+        return null;
+    }
+    return list[Math.floor(Math.random() * list.length)];
+}
+
+function createRandomBotLoadout() {
+    const characterType = pickRandom(VALID_CHARACTERS) || 'berserker';
+    const weaponType = pickRandom(VALID_WEAPONS) || DEFAULT_PRIMARY_WEAPON;
+    const secondaryChoices = VALID_SECONDARY_WEAPONS.filter((weapon) => weapon !== weaponType);
+    const secondaryWeaponType = pickRandom(secondaryChoices) || DEFAULT_SECONDARY_WEAPON;
+    const sharedAbilityType = pickRandom(VALID_SHARED_ABILITIES) || DEFAULT_SHARED_ABILITY;
+    return {
+        characterType,
+        weaponType,
+        secondaryWeaponType,
+        sharedAbilityType
+    };
+}
+
+function makeBotId(prefix = 'bot') {
+    return `${prefix}_${makeID(8)}`;
+}
+
+function decorateBotPlayer(player) {
+    player.isBot = true;
+    player.name = `Bot ${player.name || 'Player'}`;
+    ensureBotState(player);
+    return player;
+}
+
+function createBotPlayer(loadout, playerNumber, botId, spawnX = null, spawnY = null) {
+    const ownedWeapons = [...SHOP_WEAPON_CODES];
+    const bot = createPlayer(
+        loadout.characterType,
+        loadout.weaponType,
+        loadout.secondaryWeaponType,
+        loadout.sharedAbilityType,
+        playerNumber,
+        botId,
+        spawnX,
+        spawnY,
+        ownedWeapons
+    );
+    return decorateBotPlayer(bot);
+}
+
+function ensureOneVsOneBotQueue() {
+    if (BOT_ONE_VS_ONE_QUEUE <= 0) {
+        oneVsOneBotQueue.length = 0;
+        return;
+    }
+    while (oneVsOneBotQueue.length < BOT_ONE_VS_ONE_QUEUE) {
+        oneVsOneBotQueue.push({ queuedAt: Date.now() });
+    }
+}
+
+function takeOneVsOneBotLoadout() {
+    ensureOneVsOneBotQueue();
+    if (oneVsOneBotQueue.length === 0) {
+        return null;
+    }
+    oneVsOneBotQueue.shift();
+    ensureOneVsOneBotQueue();
+    return createRandomBotLoadout();
+}
+
+function removeBotFromRoom(roomState, bot) {
+    if (!roomState || !bot) return;
+    roomState.players = roomState.players.filter((player) => player.id !== bot.id);
+    roomPlayers.delete(bot.id);
+}
+
+function addBotToFreeForAll(roomState) {
+    const spawn = getRandomSpawnPosition();
+    const loadout = createRandomBotLoadout();
+    const botId = makeBotId('bot_ffa');
+    const bot = createBotPlayer(loadout, getRandomPlayerNumber(), botId, spawn.x, spawn.y);
+    bot.randomSpawn(roomState);
+    roomState.players.push(bot);
+}
+
+function refreshFreeForAllBots(roomState) {
+    if (!roomState) return;
+    const bots = roomState.players.filter((player) => player.isBot);
+    for (const bot of bots) {
+        removeBotFromRoom(roomState, bot);
+    }
+    roomState.cacheReset = true;
+}
+
+function ensureFreeForAllBots(roomState, forceRefresh = false) {
+    if (!roomState) return;
+    const now = Date.now();
+    if (!roomState.botRefreshAtMs) {
+        roomState.botRefreshAtMs = now + BOT_FFA_REFRESH_MS;
+    }
+
+    if (forceRefresh || now >= roomState.botRefreshAtMs) {
+        refreshFreeForAllBots(roomState);
+        roomState.botRefreshAtMs = now + BOT_FFA_REFRESH_MS;
+    }
+
+    const bots = roomState.players.filter((player) => player.isBot);
+    if (bots.length < BOT_FFA_COUNT) {
+        const missing = BOT_FFA_COUNT - bots.length;
+        for (let i = 0; i < missing; i++) {
+            addBotToFreeForAll(roomState);
+        }
+        roomState.cacheReset = true;
+    } else if (bots.length > BOT_FFA_COUNT) {
+        const extra = bots.length - BOT_FFA_COUNT;
+        for (let i = 0; i < extra; i++) {
+            removeBotFromRoom(roomState, bots[i]);
+        }
+        roomState.cacheReset = true;
+    }
+}
+
 function findAvailableRoom(seekerElo = DEFAULT_ELO, options = {}) {
     const seekerIdentity = options.seekerIdentity || null;
     const allowSelfMatch = options.allowSelfMatch === true;
@@ -1739,7 +1866,7 @@ function getModeStatus() {
 
     return {
         oneVsOne: {
-            queued: oneVsOneQueued,
+            queued: oneVsOneQueued + BOT_ONE_VS_ONE_QUEUE,
             playing: oneVsOnePlaying
         },
         freeForAll: {
@@ -1758,6 +1885,42 @@ const RANDOM_PLAYER_RANGE = 1000;
 
 function getRandomPlayerNumber() {
     return Math.floor(Math.random() * RANDOM_PLAYER_RANGE) + RANDOM_PLAYER_MIN;
+}
+
+function ensureFreeForAllRoom() {
+    if (state.has(FREE_FOR_ALL_ROOM)) {
+        return state.get(FREE_FOR_ALL_ROOM);
+    }
+
+    const roomState = createGameState();
+    roomState.obstacles = generateNewMap();
+    roomState.gameMode = 'freeForAll';
+    state.set(FREE_FOR_ALL_ROOM, roomState);
+    gameStateCaches.set(FREE_FOR_ALL_ROOM, new GameStateCache());
+    startGameLoop(FREE_FOR_ALL_ROOM);
+    logger.info('Free for all room created for bots');
+    return roomState;
+}
+
+function initializeBotSystem() {
+    ensureOneVsOneBotQueue();
+
+    if (BOT_FFA_COUNT > 0) {
+        const roomState = ensureFreeForAllRoom();
+        ensureFreeForAllBots(roomState, true);
+    }
+
+    setInterval(() => {
+        ensureOneVsOneBotQueue();
+        if (BOT_FFA_COUNT <= 0) {
+            return;
+        }
+        const roomState = state.get(FREE_FOR_ALL_ROOM);
+        if (!roomState) {
+            return;
+        }
+        ensureFreeForAllBots(roomState);
+    }, BOT_MAINTENANCE_INTERVAL_MS);
 }
 
 const SPAWN_DISTANCE_MIN = 50;
@@ -2162,11 +2325,30 @@ io.on('connection', (socket) => {
                 socket.number = 1;
                 socket.emit('init', 1);
                 socket.emit('gameFound', roomName);
-                socket.emit('waitingForPlayer');
-                
-                sendFullGameState(socket, roomName);
-                
-                logger.info(`New room created: ${roomName}`);
+
+                const botLoadout = takeOneVsOneBotLoadout();
+                if (botLoadout) {
+                    const botId = makeBotId('bot_1v1');
+                    const botPlayer = createBotPlayer(botLoadout, 2, botId, null, null);
+                    const roomState = state.get(roomName);
+                    roomState.players.push(botPlayer);
+                    roomState.playerRatings = roomState.playerRatings || {};
+                    roomState.playerRatings[botId] = {
+                        mode: 'guest',
+                        accountId: null,
+                        elo: DEFAULT_ELO,
+                        effectiveElo: DEFAULT_ELO
+                    };
+                    delete roomState.waitingPlayerElo;
+                    io.sockets.in(roomName).emit('gameStarting');
+                    broadcastFullGameState(roomName);
+                    startGameLoop(roomName);
+                    logger.info(`New 1v1 room started with bot: ${roomName}`);
+                } else {
+                    socket.emit('waitingForPlayer');
+                    sendFullGameState(socket, roomName);
+                    logger.info(`New room created: ${roomName}`);
+                }
             }
         } catch (error) {
             logger.error('Error in handleFindGame', error);
@@ -2202,6 +2384,7 @@ io.on('connection', (socket) => {
                 
                 logger.info('Free for all room created');
             }
+            ensureFreeForAllBots(state.get(FREE_FOR_ALL_ROOM));
 
             clientRooms.set(socket.id, FREE_FOR_ALL_ROOM);
             socket.join(FREE_FOR_ALL_ROOM);
@@ -2721,6 +2904,7 @@ initializeDatabase().catch((error) => {
 });
 initializeWebServer();
 bootstrapWebSocketRoutes();
+initializeBotSystem();
 
 let listenToken = null;
 

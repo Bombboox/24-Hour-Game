@@ -4199,6 +4199,9 @@ function drawPlayer(player, thisPlayer, isRevealedToAnyOtherPlayer = false) {
     ctx.translate(player.x, player.y);
     ctx.rotate(player.angle);
     ctx.globalAlpha *= computedOpacity;
+
+    const rawName = typeof player?.name === 'string' ? player.name : '';
+    const className = player?.characterName || (rawName.startsWith('Bot ') ? rawName.slice(4) : rawName);
     
     // draw glow effects for special abilities
     if (player.enlarged) {
@@ -4219,8 +4222,8 @@ function drawPlayer(player, thisPlayer, isRevealedToAnyOtherPlayer = false) {
         ctx.globalAlpha = 0.6;
     }
     
-    if (player.name) {
-        if (player.name === 'King' && player.passiveAbility?.isActive) {
+    if (className) {
+        if (className === 'King' && player.passiveAbility?.isActive) {
             const baseAuraRadius = player.radius + 12;
             ctx.save();
             ctx.globalAlpha = 0.22;
@@ -4231,7 +4234,7 @@ function drawPlayer(player, thisPlayer, isRevealedToAnyOtherPlayer = false) {
             ctx.restore();
         }
 
-        if (player.name === 'King' && (player.kingAuraPulseTimer || 0) > 0) {
+        if (className === 'King' && (player.kingAuraPulseTimer || 0) > 0) {
             const pulseProgress = 1 - Math.max(0, Math.min(1, player.kingAuraPulseTimer / 20));
             const pulseRadius = player.radius + 20 + pulseProgress * 240;
             const pulseAlpha = Math.max(0, 0.45 - pulseProgress * 0.45);
@@ -4245,7 +4248,7 @@ function drawPlayer(player, thisPlayer, isRevealedToAnyOtherPlayer = false) {
             ctx.restore();
         }
 
-        if (player.name === 'Waffle' && player.passiveAbility?.shieldVisible) {
+        if (className === 'Waffle' && player.passiveAbility?.shieldVisible) {
             const pulse = 1 + Math.sin(Date.now() / 150) * 0.06;
             const auraRadius = player.radius + 8 + pulse * 4;
             ctx.save();
@@ -4263,7 +4266,17 @@ function drawPlayer(player, thisPlayer, isRevealedToAnyOtherPlayer = false) {
             ctx.restore();
         }
 
-        ctx.drawImage(playerImages[player.name], -player.radius, -player.radius, player.radius * 2, player.radius * 2);
+        const sprite = className ? playerImages[className] : null;
+        if (sprite) {
+            ctx.drawImage(sprite, -player.radius, -player.radius, player.radius * 2, player.radius * 2);
+        } else {
+            ctx.beginPath();
+            ctx.arc(0, 0, player.radius, 0, 2 * Math.PI);
+            ctx.fillStyle = player.flashingTimer > 0 ? 'red' : 'blue';
+            ctx.fill();
+            ctx.strokeStyle = player.flashingTimer > 0 ? 'darkred' : 'darkblue';
+            ctx.stroke();
+        }
     } else {
         ctx.beginPath();
         ctx.arc(0, 0, player.radius, 0, 2 * Math.PI);
@@ -4326,7 +4339,7 @@ function drawPlayer(player, thisPlayer, isRevealedToAnyOtherPlayer = false) {
     }
 
     if (
-        player.name === 'Demoman' &&
+        className === 'Demoman' &&
         player.id === thisPlayer.id &&
         typeof player.specialAbility?.holdRatio === 'number' &&
         player.specialAbility.holdRatio > 0

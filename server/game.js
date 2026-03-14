@@ -4,6 +4,7 @@ const { Obstacle } = require('./obstacle');
 const { MAP_RADIUS } = require('./constants');
 const { circleObstacleCollision } = require('./collision');
 const { emitCombatText, applyHealing, applyDamage } = require('./combat');
+const { updateBots } = require('./botAI');
 const ONE_VS_ONE_KILL_TARGET = 5;
 const TWO_VS_TWO_TEAM_LIVES = 10;
 const TWO_VS_TWO_RESPAWN_DELAY = 75; // 3 seconds (delta units)
@@ -294,6 +295,8 @@ function gameLoop(gameState, deltaTime, io) {
     }
 
     updatePickupSpawns(gameState, deltaTime);
+
+    updateBots(gameState, deltaTime);
 
     for (const player of gameState.players) {
         if ((player.stunnedTimer || 0) > 0) {
